@@ -1,0 +1,13 @@
+# Runtime assets are distributed in the full Release ZIP.
+data/
+models/
+.venv/
+.cache/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.env
+.env.*
+*.log

@@ -1,0 +1,8 @@
+# pnpm 11 配置：rollup 原生二进制在 DSH runtime（hardened-runtime node）下会因
+# 代码签名 TeamID 校验无法 dlopen，改用官方 wasm 版 rollup（纯 JS/WASM，无原生依赖）。
+packages:
+  - '.'
+overrides:
+  rollup: npm:@rollup/wasm-node@4.65.0
+onlyBuiltDependencies:
+  - esbuild
