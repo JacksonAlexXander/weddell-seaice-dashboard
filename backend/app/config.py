@@ -130,7 +130,7 @@ class Settings:
 
     # 服务元信息
     service_name: str = "weddell-seaice-ml"
-    version: str = "1.1.0"
+    version: str = "1.2.0"
 
     # 网格 / 物理常量
     grid_rows: int = GRID_ROWS

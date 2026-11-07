@@ -146,7 +146,7 @@ const option = computed(() => {
     const disp = props.path.cumulative_km?.[props.path.cumulative_km.length - 1]
     const modelColor = props.selectedModel?.color || C.amber
     series.push({
-      name: '24h 预测路径',
+      name: '预测路径',
       type: 'line',
       data: pts,
       z: 6,
@@ -158,7 +158,7 @@ const option = computed(() => {
       silent: true,
     })
     series.push({
-      name: '24h 路径终点',
+      name: '路径终点',
       type: 'scatter',
       data: [
         {
@@ -168,7 +168,7 @@ const option = computed(() => {
           label: {
             show: true,
             position: 'right',
-            formatter: `24h ${disp === undefined ? '' : '+' + Number(disp).toFixed(1) + ' km'}`,
+            formatter: `+${props.path.hours.at(-1)}h ${disp === undefined ? '' : '+' + Number(disp).toFixed(1) + ' km'}`,
             color: modelColor,
             fontSize: 9,
             fontWeight: 600,

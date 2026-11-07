@@ -420,6 +420,14 @@ class PredictionEngine:
                              np.asarray(clim.v[k][rows, cols], np.float64)], axis=1)
         raise UnknownModelError(f"未知模型: {model_id!r}")
 
+    def predict_window(self, model_id: str, window: dict, rows, cols) -> np.ndarray:
+        """已有 Ridge/RF 模型对外部同网格滑窗推理，不读取归档日期。"""
+        if model_id not in ML_MODEL_IDS:
+            raise UnknownModelError(f"未知表格模型: {model_id!r}")
+        features = build_features(window, rows, cols)
+        return np.asarray(self._ensure_loaded(model_id)["pipeline"].predict(features),
+                          dtype=np.float32).reshape(-1, 2)
+
     # ------------------------------------------------------------ 不确定度
     def _rf_tree_distances(self, payload: dict, X: np.ndarray) -> np.ndarray:
         """RF 每棵树的 24h 位移模长 (n_trees, n) km。"""

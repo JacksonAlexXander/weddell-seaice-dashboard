@@ -71,7 +71,7 @@ function fmtNum(v, d = 2) {
         <div class="pred-speed">
           <span class="pred-speed-value">{{ fmtNum(pred.speed, 2) }}</span>
           <span class="pred-speed-unit">cm/s</span>
-          <span class="pred-speed-label">预测漂移速度</span>
+          <span class="pred-speed-label">首日漂移速度</span>
         </div>
         <div class="compass" :title="`地理方位角 ${fmtNum(bearing, 1)}°（${compass.zh}）`">
           <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">

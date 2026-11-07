@@ -1,9 +1,15 @@
 <script setup>
 import { computed } from 'vue'
-import { fmtTimeOnly, truncate } from '../utils/format.js'
+import { fmtTimeOnly, fmtUtc, truncate } from '../utils/format.js'
 
 const props = defineProps({
   models: { type: Array, default: () => [] },
+  mode: { type: String, default: 'archive' },
+  leadDays: { type: Number, default: 3 },
+  recentBatch: { type: Object, default: null },
+  recentLoading: { type: Boolean, default: false },
+  recentError: { type: String, default: '' },
+  recentExpired: { type: Boolean, default: false },
   selection: { type: Object, required: true },
   dataTime: { type: Object, default: null },
   predictStatus: { type: String, default: 'idle' },
@@ -13,7 +19,7 @@ const props = defineProps({
   modelsError: { type: String, default: '' },
 })
 
-const emit = defineEmits(['model-change', 'date-change', 'row-change', 'col-change', 'run'])
+const emit = defineEmits(['model-change', 'date-change', 'row-change', 'col-change', 'run', 'mode-change', 'lead-change', 'refresh-recent'])
 
 const hasAvail = computed(() => props.models.some((m) => m.available !== false))
 
@@ -68,6 +74,12 @@ function onCol(e) {
 <template>
   <div class="control-bar">
     <div class="ctl-group">
+      <button class="mini-btn" :class="{ active: mode === 'recent' }"
+        :disabled="predictStatus === 'running'" @click="emit('mode-change', 'recent')">近期预报</button>
+      <button class="mini-btn" :class="{ active: mode === 'archive' }"
+        :disabled="predictStatus === 'running'" @click="emit('mode-change', 'archive')">归档回测</button>
+    </div>
+    <div class="ctl-group">
       <span class="ctl-label">模型</span>
       <select
         class="ctl-select"
@@ -88,8 +100,8 @@ function onCol(e) {
       </select>
     </div>
 
-    <div class="ctl-group">
-      <span class="ctl-label">最后观测日</span>
+    <div v-if="mode === 'archive'" class="ctl-group">
+      <span class="ctl-label">归档观测日</span>
       <input
         class="ctl-input"
         type="date"
@@ -105,7 +117,20 @@ function onCol(e) {
         class="mini-btn"
         :disabled="!dataTime?.latest_date || predictStatus === 'running'"
         @click="useLatestDate"
-      >用最新观测</button>
+      >用最新归档</button>
+    </div>
+
+    <div v-else class="ctl-group">
+      <span class="ctl-label">{{ fmtUtc(recentBatch?.latest_at) }}</span>
+      <button type="button" class="mini-btn" :disabled="recentLoading || predictStatus === 'running'"
+        @click="emit('refresh-recent')">{{ recentLoading ? '更新中…' : '更新近期观测' }}</button>
+      <select aria-label="预报时效" class="ctl-input" :value="leadDays" :disabled="predictStatus === 'running'"
+        @change="emit('lead-change', Number($event.target.value))">
+        <option v-for="day in [1, 2, 3]" :key="day" :value="day">+{{ day * 24 }} 小时</option>
+      </select>
+    </div>
+    <div v-if="mode === 'recent' && (recentError || recentExpired)" class="ctl-group" role="status">
+      <span class="chip error">{{ recentError || '缓存时效已结束，请更新近期观测' }}</span>
     </div>
 
     <div class="ctl-group">
@@ -142,7 +167,7 @@ function onCol(e) {
 
     <button
       class="run-btn"
-      :disabled="predictStatus === 'running' || !hasAvail"
+      :disabled="predictStatus === 'running' || !hasAvail || (mode === 'recent' && (!recentBatch?.available || recentLoading))"
       :title="hasAvail ? 'POST /api/predict（真实推理，不训练）' : '模型列表中无可用模型'"
       @click="$emit('run')"
     >

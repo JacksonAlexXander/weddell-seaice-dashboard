@@ -31,6 +31,7 @@ from .schemas import APIError, ErrorDetail, ErrorResponse, error_status
 from .services.artifact_store import ArtifactStore
 from .services.field_service import FieldService
 from .services.predict_service import PredictService
+from .services.recent_service import RecentService
 
 logger = logging.getLogger("backend.app")
 
@@ -222,6 +223,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.store = store
         app.state.field_service = FieldService(store)
         app.state.predict_service = PredictService(store)
+        app.state.recent_service = RecentService(store)
         app.state.started_at = time.time()
         app.state.warmup_thread = None
         logger.info(
@@ -279,7 +281,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _register_exception_handlers(app)
 
     # API 路由（务必先于静态 catch-all 注册）
-    from .routers import backtest, field, health, metrics, models, overview, predict
+    from .routers import backtest, field, health, metrics, models, overview, predict, recent
 
     app.include_router(health.router, prefix="/api")
     app.include_router(models.router, prefix="/api")
@@ -287,6 +289,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(overview.router, prefix="/api")
     app.include_router(field.router, prefix="/api")
     app.include_router(predict.router, prefix="/api")
+    app.include_router(recent.router, prefix="/api")
     app.include_router(backtest.router, prefix="/api")
 
     _register_static_routes(app, active_settings)

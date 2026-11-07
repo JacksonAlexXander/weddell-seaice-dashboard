@@ -19,6 +19,8 @@ const {
   state,
   usingMock,
   dataTime,
+  activeDataTime,
+  recentExpired,
   modelsList,
   selectedModel,
   currentFieldLoading,
@@ -62,7 +64,8 @@ const retryBacktest = () => actions.loadBacktest()
 <template>
   <div class="app-shell">
     <AppHeader
-      :data-time="dataTime"
+      :data-time="activeDataTime"
+      :recent="state.mode === 'recent'"
       :health="state.health"
       :clock="state.clock"
       :predict-status="state.predictStatus"
@@ -109,6 +112,15 @@ const retryBacktest = () => actions.loadBacktest()
       <div class="col-center">
         <ControlBar
           :models="modelsList"
+          :mode="state.mode"
+          :lead-days="state.leadDays"
+          :recent-batch="state.recentBatch"
+          :recent-loading="state.recentLoading"
+          :recent-error="state.recentError || ''"
+          :recent-expired="recentExpired"
+          @mode-change="actions.setMode"
+          @lead-change="actions.setLeadDays"
+          @refresh-recent="actions.refreshRecent"
           :selection="state.selection"
           :data-time="dataTime"
           :predict-status="state.predictStatus"
@@ -157,7 +169,7 @@ const retryBacktest = () => actions.loadBacktest()
           :error="state.metricsError || ''"
           @retry="retryMetrics"
         />
-        <BacktestPanel
+        <BacktestPanel v-if="state.mode === 'archive'"
           :backtest="state.backtest"
           :loading="state.backtestLoading"
           :error="state.backtestError || ''"
@@ -170,7 +182,8 @@ const retryBacktest = () => actions.loadBacktest()
         />
         <StatusPanel
           :warnings="warnings"
-          :data-time="dataTime"
+          :data-time="activeDataTime"
+          :recent="state.mode === 'recent'"
           :prediction="state.prediction"
           :backtest-at="state.backtestAt"
           :predict-at="state.predictAt"
@@ -179,6 +192,6 @@ const retryBacktest = () => actions.loadBacktest()
       </div>
     </main>
 
-    <AppFooter :data-time="dataTime" :generated-at="generatedAt" />
+    <AppFooter :data-time="activeDataTime" :recent="state.mode === 'recent'" :generated-at="generatedAt" />
   </div>
 </template>

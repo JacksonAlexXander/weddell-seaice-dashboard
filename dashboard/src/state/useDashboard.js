@@ -8,6 +8,7 @@ const FALLBACK = {
   cell: { row: 65, col: 60 },
 }
 
+const RECENT_MODELS = new Set(['simvp', 'ridge', 'random_forest'])
 const ROWS = 116
 const COLS = 158
 
@@ -17,6 +18,11 @@ export function useDashboard() {
     booting: true,
     booted: false,
     selectionTouched: false,
+    mode: 'archive',
+    leadDays: 3,
+    recentBatch: null,
+    recentLoading: false,
+    recentError: null,
 
     health: { ok: false, checked: false, error: null, data: null, checkedAt: null },
 
@@ -71,13 +77,22 @@ export function useDashboard() {
   let predictRunId = 0
   let backtestToken = 0
   let disposed = false
+  let archiveSelection = null
 
   // ---------------- 派生数据 ----------------
   const dataTime = computed(
     () => state.models?.data_time || state.overview?.data_time || null
   )
 
-  const modelsList = computed(() => state.models?.models || [])
+  const modelsList = computed(() => {
+    const models = state.models?.models || []
+    return state.mode === 'recent' ? models.filter(m => RECENT_MODELS.has(m.id)) : models
+  })
+  const activeDataTime = computed(() => state.mode === 'archive' ? dataTime.value : {
+    ...state.recentBatch, built_at: state.recentBatch?.downloaded_at,
+  })
+  const recentExpired = computed(() => Boolean(state.recentBatch?.available &&
+    Date.parse(state.recentBatch.latest_at) + 3 * 86400000 <= state.clock.getTime()))
 
   const availableModels = computed(() => modelsList.value.filter((m) => m.available !== false))
 
@@ -112,7 +127,7 @@ export function useDashboard() {
     const p = state.prediction
     if (!p || !p.series_24h) return null
     if (p.data_time?.last_obs_date && p.data_time.last_obs_date !== state.selection.date) return null
-    return p.series_24h
+    return p.series_horizon || p.series_24h
   })
 
   const warnings = computed(() => {
@@ -223,7 +238,9 @@ export function useDashboard() {
     state.observedField = null
     state.fieldError = null
     try {
-      const res = await api.field({ date: state.selection.date, stride: 5 })
+      if (state.mode === 'recent' && !state.recentBatch?.available) return
+      const res = state.mode === 'recent' ? await api.recentField({ date: state.selection.date }) :
+        await api.field({ date: state.selection.date, stride: 5 })
       if (token !== fieldToken || disposed) return
       state.observedField = res
       state.fieldAt = new Date()
@@ -238,14 +255,17 @@ export function useDashboard() {
   async function loadPredictedField(force = false) {
     const model = state.selection.model
     const date = state.selection.date
-    const key = `${model}|${date}|5`
+    const key = `${state.mode}|${model}|${date}|${state.leadDays}`
     if (!force && state.predictedField && state.predictedKey === key) return
     const token = ++predFieldToken
     state.predictedLoading = true
     state.predictedField = null
     state.predictedError = null
     try {
-      const res = await api.predictedField({ model, date, stride: 5 })
+      if (state.mode === 'recent' && !state.recentBatch?.available) return
+      const res = state.mode === 'recent'
+        ? await api.recentField({ model, date, lead_days: state.leadDays })
+        : await api.predictedField({ model, date, stride: 5 })
       if (token !== predFieldToken || disposed) return
       state.predictedField = res
       state.predictedKey = key
@@ -259,6 +279,76 @@ export function useDashboard() {
     }
   }
 
+  async function loadRecent() {
+    if (usingMock) return
+    try {
+      state.recentBatch = await api.recent()
+    } catch (err) {
+      state.recentError = describeError(err)
+    }
+  }
+
+  function applyRecentBatch() {
+    const batch = state.recentBatch
+    if (!batch?.available) return
+    state.selection.date = batch.latest_date
+    state.selection.row = batch.default_cell.row
+    state.selection.col = batch.default_cell.col
+  }
+
+  async function refreshRecent() {
+    if (state.recentLoading) return
+    state.recentLoading = true
+    state.recentError = null
+    try {
+      state.recentBatch = await api.refreshRecent()
+      if (state.mode === 'recent') {
+        applyRecentBatch()
+        clearPrediction()
+        state.predictedKey = ''
+        await loadField()
+        if (state.mapMode === 'predicted') await loadPredictedField()
+      }
+    } catch (err) {
+      state.recentError = describeError(err)
+    } finally {
+      state.recentLoading = false
+    }
+  }
+
+  function setMode(mode, reload = true) {
+    if (mode === state.mode) return
+    if (mode === 'recent') archiveSelection = { ...state.selection }
+    state.mode = mode
+    if (mode === 'recent') {
+      if (!RECENT_MODELS.has(state.selection.model)) {
+        state.selection.model = availableModels.value[0]?.id || 'simvp'
+      }
+      applyRecentBatch()
+    } else if (archiveSelection) {
+      Object.assign(state.selection, archiveSelection)
+    }
+    clearPrediction()
+    ++predFieldToken
+    ++backtestToken
+    state.backtest = null
+    state.backtestAt = null
+    state.backtestError = null
+    state.backtestLoading = false
+    state.mapMode = 'observed'
+    state.predictedField = null
+    state.predictedKey = ''
+    state.predictedError = null
+    state.predictedLoading = false
+    if (reload) loadField()
+  }
+
+  function setLeadDays(days) {
+    state.leadDays = Number(days)
+    clearPrediction()
+    if (state.mapMode === 'predicted') loadPredictedField()
+  }
+
   // ---------------- 交互 ----------------
   function applyDefaults() {
     const res = state.models
@@ -267,7 +357,7 @@ export function useDashboard() {
     const avail = availableModels.value
     const ids = new Set(avail.map((m) => m.id))
 
-    if (!state.selectionTouched) {
+    if (!state.selectionTouched && state.mode === 'archive') {
       if (def.model && ids.has(def.model)) state.selection.model = def.model
       else if (avail.length && !ids.has(state.selection.model)) state.selection.model = avail[0].id
       if (def.date) state.selection.date = String(def.date).slice(0, 10)
@@ -280,7 +370,7 @@ export function useDashboard() {
     }
 
     const dt = dataTime.value
-    if (dt) {
+    if (dt && state.mode === 'archive') {
       if (state.selection.date < dt.first_date) state.selection.date = dt.first_date
       if (state.selection.date > dt.latest_date) state.selection.date = dt.latest_date
     }
@@ -369,6 +459,7 @@ export function useDashboard() {
         model: state.selection.model,
         date: state.selection.date,
         cell: { row: state.selection.row, col: state.selection.col },
+        ...(state.mode === 'recent' ? { source: 'recent', lead_days: state.leadDays } : {}),
       })
       if (runId !== predictRunId || disposed) return
       const clientMs = Math.round(performance.now() - started)
@@ -377,8 +468,7 @@ export function useDashboard() {
       state.predictElapsedMs = res.elapsed_ms ?? clientMs
       state.predictClientMs = clientMs
       state.predictAt = new Date()
-      // 契约：预测成功后自动刷新历史回测
-      await loadBacktest()
+      if (state.mode === 'archive') await loadBacktest()
     } catch (err) {
       if (runId !== predictRunId || disposed) return
       state.predictStatus = 'error'
@@ -432,11 +522,14 @@ export function useDashboard() {
     if (state.booted) return
     startTimers()
     state.booting = true
-    await Promise.allSettled([loadHealth(), loadModels(), loadOverview(), loadMetrics()])
+    await Promise.allSettled([loadHealth(), loadModels(), loadOverview(), loadMetrics(), loadRecent()])
+    if (state.recentBatch?.available && new URLSearchParams(window.location.search).get('mode') !== 'archive') {
+      setMode('recent', false)
+    }
     await loadField()
     state.booting = false
     state.booted = true
-    if (state.models) await runPredict()
+    if (state.models && !(state.mode === 'recent' && recentExpired.value)) await runPredict()
   }
 
   async function retryConnection() {
@@ -459,6 +552,8 @@ export function useDashboard() {
     state,
     usingMock,
     dataTime,
+    activeDataTime,
+    recentExpired,
     modelsList,
     availableModels,
     selectedModel,
@@ -475,6 +570,9 @@ export function useDashboard() {
       retryConnection,
       loadHealth,
       loadModels,
+      setMode,
+      setLeadDays,
+      refreshRecent,
       loadOverview,
       loadMetrics,
       loadField,

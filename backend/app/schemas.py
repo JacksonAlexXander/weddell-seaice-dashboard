@@ -196,14 +196,18 @@ class PredictRequest(BaseModel):
     """POST /api/predict 请求体。"""
 
     model: str = Field(..., description="模型 id（/api/models 中 available=true）")
-    date: str = Field(..., description="最后观测日 YYYY-MM-DD，须存在于数据集")
+    source: Literal["archive", "recent"] = "archive"
+    date: str = Field(..., description="起报观测日 YYYY-MM-DD，recent 也可用 latest")
     cell: Cell
+    lead_days: int = Field(3, ge=1, le=3, description="近期预报时效（1–3 天）；归档仍为 24 小时")
 
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("date")
     @classmethod
-    def _valid_date(cls, v: str) -> str:
+    def _valid_date(cls, v: str, info) -> str:
+        if v == "latest" and info.data.get("source") == "recent":
+            return v
         return validate_date_string(v, "date")
 
 
@@ -416,6 +420,10 @@ class PredictDataTime(BaseModel):
     horizon_hours: int = 24
     latest_date: str
     n_frames: int
+    source: str = "NSIDC-0116 v4"
+    observation_end_at: str | None = None
+    forecast_valid_until: str | None = None
+    extends_past_now: bool | None = None
 
 
 class Prediction(BaseModel):
@@ -453,6 +461,14 @@ class PredictMetrics(BaseModel):
     skill_vs_persistence: float | None = None
 
 
+class DailyForecast(BaseModel):
+    lead_hours: int
+    valid_at: str
+    u: float
+    v: float
+    speed: float
+
+
 class PredictResponse(BaseModel):
     status: str = "ok"
     status_text: str = "预测成功"
@@ -463,6 +479,8 @@ class PredictResponse(BaseModel):
     input: PredictInput
     prediction: Prediction
     series_24h: Series24h
+    series_horizon: Series24h | None = None
+    daily_forecasts: list[DailyForecast] | None = None
     metrics: PredictMetrics | None = None
     warnings: list[WarningItem] = Field(default_factory=list)
 

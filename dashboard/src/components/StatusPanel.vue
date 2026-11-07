@@ -4,6 +4,7 @@ import PanelShell from './PanelShell.vue'
 import { fmtInt, fmtTimeOnly, fmtUtc } from '../utils/format.js'
 
 const props = defineProps({
+  recent: { type: Boolean, default: false },
   warnings: { type: Array, default: () => [] },
   dataTime: { type: Object, default: null },
   prediction: { type: Object, default: null },
@@ -19,6 +20,14 @@ const showWarnings = computed(() => (props.warnings || []).slice(0, 3))
 const dtRows = computed(() => {
   const p = props.prediction?.data_time
   const d = props.dataTime
+  if (props.recent) return [
+    { label: '近期数据源', value: d?.source || 'OSI SAF' },
+    { label: '观测结束', value: fmtUtc(p?.observation_end_at || d?.latest_at), cy: true },
+    { label: '预报有效至', value: fmtUtc(p?.forecast_valid_until), cy: true },
+    { label: '轨迹覆盖未来', value: p ? (p.extends_past_now ? '是' : '时效已结束') : '—' },
+    { label: '观测口径', value: '62.5 km · 48h 平均' },
+    { label: '连续观测帧', value: d?.n_frames || '—' },
+  ]
   const rows = [
     { label: '起报日', value: p?.last_obs_date || props.selection.date, cy: true },
     { label: '24h 目标日', value: p?.next_frame_date || '—', cy: true },
@@ -60,7 +69,11 @@ const dtRows = computed(() => {
     </div>
 
     <div class="dt-section">
-      <span class="dt-caption">数据时间 / 批次（{{ fmtUtc(dataTime?.built_at) }} 构建）</span>
+      <span class="dt-caption">
+        <a v-if="recent" href="https://doi.org/10.15770/EUM_SAF_OSI_NRT_2007" target="_blank"
+          rel="noopener noreferrer">EUMETSAT OSI SAF · UTC</a>
+        <template v-else>归档批次 {{ fmtUtc(dataTime?.built_at) }}</template>
+      </span>
       <div class="dt-grid">
         <div v-for="row in dtRows" :key="row.label" class="dt-item">
           <span class="dt-label">{{ row.label }}</span>

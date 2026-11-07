@@ -308,17 +308,27 @@ class SimVPPredictor:
         x = np.stack([un, vn, sin_c, cos_c], axis=1)  # (T,4,H,W)
         return torch.from_numpy(x).unsqueeze(0).to(self.device)
 
-    def _forward_day1(self, x):
-        """模型前向 → day-1 u,v（cm/s，116×158）。"""
-        torch = self._torch
-        with torch.no_grad():
-            out = self._model(x)                    # (1, 5, 2, 120, 160) 标准化
-            du = out[0, 0, 0].float().cpu().numpy()
-            dv = out[0, 0, 1].float().cpu().numpy()
-        du, dv = _unpad(du), _unpad(dv)
-        u = du * self._stats["u_std"] + self._stats["u_mean"]
-        v = dv * self._stats["v_std"] + self._stats["v_mean"]
+    def _forward(self, x, days):
+        with self._torch.no_grad():
+            uv = self._model(x)[0, :days].float().cpu().numpy()
+        u = _unpad(uv[:, 0]) * self._stats["u_std"] + self._stats["u_mean"]
+        v = _unpad(uv[:, 1]) * self._stats["v_std"] + self._stats["v_mean"]
         return u.astype(np.float32), v.astype(np.float32)
+
+    def _forward_day1(self, x):
+        u, v = self._forward(x, 1)
+        return u[0], v[0]
+
+    def predict_window(self, window, days):
+        """已有 SimVP 权重一次前向，返回独立训练的多个日时效。"""
+        with self._lock:
+            self._ensure_zarr()
+            self._ensure_model()
+            if len(window["doy"]) < self.tin or days > self.tout:
+                raise ValueError("SimVP 输入窗口或输出时效超出权重配置")
+            sl = slice(-self.tin, None)
+            x = self._to_input_tensor(window["u"][sl], window["v"][sl], window["doy"][sl])
+            return self._forward(x, days)
 
     def _predict_indices(self, last_obs_indices) -> list[tuple[np.ndarray, np.ndarray]]:
         """批量预测 day-1 场（list of (u,v) cm/s）。"""

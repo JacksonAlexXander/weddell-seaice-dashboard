@@ -10,3 +10,4 @@ pyarrow==26.0.0
 torch==2.14.1
 fastapi==0.162.0
 uvicorn==0.54.0
+netCDF4==1.7.5.1.post1

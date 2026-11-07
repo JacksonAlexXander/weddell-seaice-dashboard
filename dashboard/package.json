@@ -1,7 +1,7 @@
 {
   "name": "weddell-seaice-dashboard",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "南极威德尔海海冰漂移智能预测大屏（Vue 3 + Vite + ECharts）",
   "scripts": {

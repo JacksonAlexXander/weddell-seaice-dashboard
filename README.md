@@ -2,9 +2,9 @@
 
 基于 NSIDC-0116 v4 海冰漂移数据的交互式预测大屏。下载完整运行包后，可在自己的电脑上进行预测与历史回测，无需云服务器或 API 密钥。
 
-**[下载 v1.1.0 完整安装包](https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/download/v1.1.0/weddell-seaice-dashboard-v1.1.0-full.zip)** · [版本说明和校验文件](https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/latest)
+**[下载 v1.2.0 完整安装包](https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/download/v1.2.0/weddell-seaice-dashboard-v1.2.0-full.zip)** · [版本说明和校验文件](https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/latest)
 
-完整 ZIP 包含历史数据、已训练权重、启动脚本和已构建的大屏。请在 Releases 中选择带
+完整 ZIP 包含历史数据、已训练权重、近期观测缓存、启动脚本和已构建的大屏。请在 Releases 中选择带
 `-full.zip` 的文件。GitHub 自动生成的 `Source code (zip)` 仅供查看源码。
 模型选择、训练过程、独立测试结果和论文见[训练与回测记录](docs/训练与回测.md)。
 
@@ -22,7 +22,7 @@
 
 首次启动会自动创建项目内的 `.venv` 并联网安装依赖，可能需要数分钟。之后会启动本地服务并打开浏览器：**http://127.0.0.1:8000/**。使用时保持启动窗口打开，按 `Ctrl+C` 停止服务。
 
-建议至少 8 GB 内存、预留 6 GB 磁盘空间。无需独立显卡；CPU 可运行。安装依赖后，预测与历史回测使用本地数据，不依赖在线 API。此版本已在 macOS Apple Silicon + Python 3.13 上验证；Windows/Linux 提供启动入口，尚未进行实机验证。
+建议至少 8 GB 内存、预留 6 GB 磁盘空间。无需独立显卡；CPU 可运行。安装依赖后可用本地观测缓存预测和回测。更新近期观测需要联网访问 MET Norway 数据服务。此版本已在 macOS Apple Silicon + Python 3.13 上验证；Windows/Linux 提供启动入口，尚未进行实机验证。
 
 如果 8000 端口已被占用，可选择 8765：
 
@@ -33,23 +33,23 @@ python3 start.py --port 8765
 py -3.13 start.py --port 8765
 ```
 
-## 使用步骤
+## 近期预报
 
-1. 选择模型与数据范围内的起报日期，或点击「用最新观测」。
-2. 在地图点击像元，或输入行列号；可从默认像元 `row=65, col=60`、日期 `2025-06-26` 开始。
-3. 点击“一键运行预测”，查看漂移矢量、24 小时位移曲线与预测路径。
-4. 切换“观测 / 预测”漂移场，或选择 90 / 180 / 365 天历史回测。
+1. 进入「近期预报」，点击「更新近期观测」获取 EUMETSAT OSI SAF 最新的连续 10 日观测。
+2. 选 SimVP、Ridge 或 Random Forest，再选 24、48 或 72 小时。通过地图选有近期观测的像元。
+3. 点击「一键运行预测」。查看轨迹、每日 u/v 和预报有效截止时刻，或下载 JSON。
+4. 切到地图「预测」查看所选时效的区域漂移场。切到「归档回测」可继续用 1978–2025 年历史数据对比。
 
-提供默认的 SimVP 24h 微调模型、Ridge、Random Forest，以及持续性和气候态两种基线。
-点击预测时只加载已训练模型并推理，预测结果以 JSON 返回。原 SimVP 权重保留在
-`models/simvp-v1/`，更新版权重位于 `models/simvp-24h/`。
+时效从**实际观测结束时刻**算起。卫星数据有发布时间差，界面会说明所选轨迹是否延伸到当前时刻之后。
+SimVP 直接输出多日预测，Ridge 与 Random Forest 使用首日预测递推。点击预测只运行已训练权重。
+[近期数据、接口与预报口径](docs/近期预报.md)
 
 ## 数据与结果口径
 
 - 数据：NSIDC-0116 v4，威德尔海子集，1978–2025 年，116 × 158 网格。
 - 来源为 Tschudi、Meier 和 Stewart（2019）的 NSIDC-0116 v4，由 NASA NSIDC DAAC 分发。包内数据为 60°W–20°E、60°S–83°S 的威德尔海子集。[数据 DOI](https://doi.org/10.5067/INAWUWO7QH7B) · [NSIDC 数据引用指南](https://nsidc.org/data/data-programs/nsidc-daac/citing-nsidc-daac)
-- 数据批次覆盖 1978-10-25 至 2025-12-30。用最后观测日起报可预测 2025-12-31，界面会标明目标日缺观测。实时起报需要更新最近观测数据。
-- 24 小时轨迹由日平均漂移矢量在 EPSG:3409 网格上积分，再反投影到经纬度。逐时点是插值。
+- NSIDC 归档覆盖 1978-10-25 至 2025-12-30。近期模式使用独立的 OSI SAF 缓存，更新观测需要联网。
+- 轨迹由日平均预测矢量在 EPSG:3409 网格上分段积分，再反投影到经纬度。
 - 模型误差、不确定性和历史评估指标在界面中展示。
 
 ## 文件结构

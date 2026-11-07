@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from ..deps import get_predict_service
 from ..schemas import PredictRequest, PredictResponse
@@ -23,6 +23,9 @@ router = APIRouter(tags=["predict"])
 )
 def predict(
     request: PredictRequest,
+    http: Request,
     service: PredictService = Depends(get_predict_service),
 ) -> PredictResponse:
+    if request.source == "recent":
+        return http.app.state.recent_service.predict(request)
     return service.predict(request)

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { fmtClock, fmtUtc } from '../utils/format.js'
 
 const props = defineProps({
+  recent: { type: Boolean, default: false },
   dataTime: { type: Object, default: null },
   health: { type: Object, required: true },
   clock: { type: Date, required: true },
@@ -57,7 +58,7 @@ const statusText = computed(() => {
         <div class="brand-sub">WEDDELL SEA ICE DRIFT · ML PREDICTION CENTER</div>
       </div>
       <div class="badges">
-        <span class="badge">NSIDC-0116 v4</span>
+        <span class="badge">{{ recent ? 'OSI SAF 近期预报' : 'NSIDC-0116 v4' }}</span>
         <span class="badge purple">48 年 · 17,188 帧</span>
         <span class="badge">25 km EASE-Grid</span>
       </div>
@@ -69,7 +70,7 @@ const statusText = computed(() => {
         <span class="hstat-value accent mono">{{ dataTime?.latest_date || '—' }}</span>
       </div>
       <div class="hstat">
-        <span class="hstat-label">数据集构建</span>
+        <span class="hstat-label">{{ recent ? '近期数据获取' : '数据集构建' }}</span>
         <span class="hstat-value small mono">{{ builtAt }}</span>
       </div>
       <div class="hstat">

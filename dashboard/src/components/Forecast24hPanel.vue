@@ -11,7 +11,7 @@ const props = defineProps({
 
 const el = ref(null)
 
-const series24 = computed(() => props.prediction?.series_24h || null)
+const series24 = computed(() => props.prediction?.series_horizon || props.prediction?.series_24h || null)
 
 const option = computed(() => {
   const s = series24.value
@@ -57,7 +57,7 @@ const option = computed(() => {
     name: '逐时累计位移',
     type: 'line',
     data: cum,
-    smooth: 0.25,
+    smooth: props.prediction?.series_horizon ? false : 0.25,
     showSymbol: true,
     symbol: 'circle',
     symbolSize: 3.2,
@@ -103,6 +103,7 @@ const option = computed(() => {
   series.push({
     name: '漂移速度',
     type: 'line',
+    step: props.prediction?.series_horizon ? 'start' : false,
     yAxisIndex: 1,
     data: speed,
     smooth: false,
@@ -154,7 +155,7 @@ const option = computed(() => {
       nameGap: 5,
       nameLocation: 'end',
       nameTextStyle: { color: C.muted, fontSize: 9 },
-      axisLabel: { color: C.muted, fontSize: 9, interval: 4 },
+      axisLabel: { color: C.muted, fontSize: 9, interval: hours.length > 49 ? 11 : 4 },
     }),
     yAxis: [
       valAxis({
@@ -183,15 +184,25 @@ const subtitle = computed(() => {
   if (!p) return '日尺度 → 逐时线性积分'
   const m = p.model?.name || ''
   const dt = p.data_time || {}
-  return `${m} · ${dt.last_obs_date || '—'} → ${dt.next_frame_date || p.series_24h?.target_date || '—'}`
+  return `${m} · ${dt.last_obs_date || '—'} → ${series24.value?.target_date || dt.next_frame_date || '—'}`
 })
+
+function downloadForecast() {
+  const forecast = props.prediction
+  const url = URL.createObjectURL(new Blob([JSON.stringify(forecast, null, 2)], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `weddell-${forecast.model.id}-${forecast.data_time.last_obs_date}.json`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 
 const hasSeries = computed(() => Boolean(series24.value && series24.value.hours?.length))
 </script>
 
 <template>
   <PanelShell
-    title="未来 24 小时预测曲线"
+    :title="prediction?.series_horizon ? `近期漂移预报 · +${series24.hours.at(-1)} 小时` : '24 小时预测曲线'"
     :subtitle="subtitle"
     :loading="running"
     :empty="!running && !hasSeries"
@@ -199,14 +210,20 @@ const hasSeries = computed(() => Boolean(series24.value && series24.value.hours?
   >
     <template #extra>
       <span v-if="prediction?.metrics" class="tag">该模型 vec RMSE {{ prediction.metrics.vec_rmse }}</span>
-      <span class="tag amber">逐时 = 线性积分</span>
+      <button v-if="prediction?.series_horizon" class="mini-btn" @click="downloadForecast">下载预报 JSON</button>
+      <span class="tag amber">逐时积分</span>
     </template>
 
     <div class="forecast-body" :class="{ 'is-empty': !hasSeries }">
       <div ref="el" class="forecast-chart"></div>
+      <div v-if="prediction?.daily_forecasts" class="forecast-note">
+        <span v-for="day in prediction.daily_forecasts" :key="day.lead_hours">
+          +{{ day.lead_hours }}h · u {{ day.u.toFixed(2) }} / v {{ day.v.toFixed(2) }} cm/s
+        </span>
+      </div>
       <div v-if="hasSeries" class="forecast-note">
         <span class="dot cyan"></span>
-        口径：日尺度产品仅给出 24h 平均漂移矢量，逐时位置 / 累计位移为线性积分，非逐时观测；
+        {{ series24.interpolation }}
         <template v-if="series24?.uncertainty">不确定度：{{ series24.uncertainty.method }}</template>
       </div>
     </div>

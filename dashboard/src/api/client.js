@@ -128,6 +128,10 @@ function qs(params) {
 export const api = {
   health: () => request('GET', '/api/health', undefined, { timeout: 8000 }),
   models: () => request('GET', '/api/models'),
+  recent: () => request('GET', '/api/recent'),
+  refreshRecent: () => request('POST', '/api/recent/refresh', undefined, { timeout: 120000 }),
+  recentField: ({ model, lead_days, date }) =>
+    request('GET', `/api/recent/field${qs({ model, lead_days, date })}`, undefined, { timeout: 90000 }),
   metrics: () => request('GET', '/api/metrics'),
   overview: () => request('GET', '/api/overview'),
   field: ({ date, stride = 5 } = {}) => request('GET', `/api/field${qs({ date, stride })}`),
