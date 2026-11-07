@@ -429,7 +429,7 @@ def test_health(client):
     body = response.json()
     assert body["status"] == "ok"
     assert body["service"] == "weddell-seaice-ml"
-    assert body["version"] == "1.0.0"
+    assert body["version"] == client.app.version
     assert isinstance(body["uptime_s"], (int, float)) and body["uptime_s"] >= 0
     assert isinstance(body["models_loaded"], list)
     assert all(isinstance(m, str) for m in body["models_loaded"])
