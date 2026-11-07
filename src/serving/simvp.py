@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sys
@@ -31,6 +32,8 @@ import time
 from pathlib import Path
 
 import numpy as np
+
+from src.predict.common import next_calendar_day
 
 ROOT = Path(__file__).resolve().parents[2]
 _SRC = ROOT / "src"
@@ -41,7 +44,7 @@ GRID_H, GRID_W = 116, 158
 PAD_H, PAD_W = 120, 160
 TIN, TOUT = 10, 5
 DEFAULT_ZARR = ROOT / "data/processed/weddell_icemotion_daily.zarr"
-DEFAULT_CKPT = ROOT / "models/simvp-v1/ckpt_best.pt"
+DEFAULT_CKPT = ROOT / "models/simvp-24h/ckpt_best.pt"
 DEFAULT_PRECOMPUTED = ROOT / "data/processed/dashboard/simvp_day1_fields.npz"
 DEFAULT_METRICS = ROOT / "data/processed/dashboard/metrics_simvp.json"
 DEFAULT_CELL_STATS = ROOT / "data/processed/dashboard/cell_stats.npz"
@@ -102,6 +105,7 @@ class SimVPPredictor:
         self._zarr = None
         self._torch = None
         self._model = None
+        self._pre_checked = False
         self._pre = None            # 预计算 dict: dates/target_idx/u/v
         self._field_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._field_cache_order: list[int] = []
@@ -192,24 +196,33 @@ class SimVPPredictor:
         self._state["device"] = device
         self._ckpt_epoch = ckpt.get("epoch")
         self._ckpt_best_val = ckpt.get("best_val")
+        self._init_weights = args.get("init_weights") or None
 
     def _ensure_precomputed(self) -> bool:
-        if self._pre is not None:
-            return True
-        if self.precomputed_path is None or not self.precomputed_path.exists():
-            return False
-        try:
-            data = np.load(self.precomputed_path, allow_pickle=False)
-            self._pre = {
-                "dates": data["dates"],
-                "target_idx": data["target_idx"].astype(np.int64),
-                "u": data["u"],   # (N,116,158) float16
-                "v": data["v"],
-            }
-            return True
-        except Exception:  # noqa: BLE001
-            self._pre = None
-            return False
+        with self._lock:
+            if self._pre_checked:
+                return self._pre is not None
+            self._pre_checked = True
+            if self.precomputed_path is None or not self.precomputed_path.exists():
+                return False
+            try:
+                with np.load(self.precomputed_path, allow_pickle=False) as data:
+                    if "checkpoint_sha256" in data:
+                        with self.ckpt_path.open("rb") as checkpoint:
+                            digest = hashlib.file_digest(checkpoint, "sha256").hexdigest()
+                        if data["checkpoint_sha256"].item() != digest:
+                            return False
+                    elif self.ckpt_path.resolve() != (ROOT / "models/simvp-v1/ckpt_best.pt").resolve():
+                        return False
+                    self._pre = {
+                        "dates": data["dates"],
+                        "target_idx": data["target_idx"].astype(np.int64),
+                        "u": data["u"],
+                        "v": data["v"],
+                    }
+            except (ValueError, OSError, KeyError):
+                self._pre = None
+            return self._pre is not None
 
     def _ensure_metrics(self):
         if self._metrics is None:
@@ -319,26 +332,25 @@ class SimVPPredictor:
         return outs
 
     # ------------------------------------------------------------------ 核心
-    def _field_for_last_obs(self, last_obs_idx: int) -> tuple[np.ndarray, np.ndarray, int, str]:
-        """返回目标帧（last_obs+1）的 u,v 场 + target_idx + 来源（precomputed/live）。"""
-        target_idx = last_obs_idx + 1
+    def _field_for_last_obs(self, last_obs_idx: int, *, prefer_precomputed: bool = True) -> tuple[np.ndarray, np.ndarray, int | None, str]:
+        """返回次日预测场、可选的真实目标帧索引及推理来源。"""
         self._ensure_zarr()
-        if target_idx >= self.n_frames:
-            raise ValueError("no_future_frame")
-        if self._ensure_precomputed() and self._pre is not None:
+        next_idx = last_obs_idx + 1
+        target_idx = (next_idx if next_idx < self.n_frames and
+                      self._dates[next_idx] == next_calendar_day(self._dates[last_obs_idx]) else None)
+        if last_obs_idx in self._field_cache:
+            u, v = self._field_cache[last_obs_idx]
+            return u, v, target_idx, "cache"
+        if prefer_precomputed and target_idx is not None and self._ensure_precomputed():
             hit = np.where(self._pre["target_idx"] == target_idx)[0]
             if len(hit):
                 k = int(hit[0])
                 u = self._pre["u"][k].astype(np.float32)
                 v = self._pre["v"][k].astype(np.float32)
                 return u, v, target_idx, "precomputed"
-        # LRU 缓存
-        if target_idx in self._field_cache:
-            u, v = self._field_cache[target_idx]
-            return u, v, target_idx, "cache"
         u, v = self._predict_indices([last_obs_idx])[0]
-        self._field_cache[target_idx] = (u, v)
-        self._field_cache_order.append(target_idx)
+        self._field_cache[last_obs_idx] = (u, v)
+        self._field_cache_order.append(last_obs_idx)
         while len(self._field_cache_order) > 8:
             old = self._field_cache_order.pop(0)
             self._field_cache.pop(old, None)
@@ -358,17 +370,13 @@ class SimVPPredictor:
             "lon": round(float(self._lon[row, col]), 4),
         }
 
-    def _warnings(self, row, col, last_obs_idx, target_idx, pred_speed, valid: bool = True):
+    def _warnings(self, row, col, last_obs_idx, pred_speed, valid: bool = True):
         warns = []
         full = np.asarray(self._zarr["valid_fraction"][last_obs_idx], dtype=np.float32)
         coverage = float(full)
         if coverage < 0.15:
             warns.append({"code": "low_coverage", "level": "warning",
                           "message": f"起报日有效海冰覆盖仅 {coverage * 100:.1f}%，预测可信度下降"})
-        gap = int((self._dates[target_idx] - self._dates[last_obs_idx]).astype(int))
-        if gap > 1:
-            warns.append({"code": "frame_gap", "level": "info",
-                          "message": f"下一有效帧距起报日 {gap} 天（数据缺失日），24h 曲线为近似"})
         cs = self._ensure_cell_stats()
         p99 = None
         if cs and "speed_p99" in cs:
@@ -428,7 +436,7 @@ class SimVPPredictor:
         coverage = float(mask.mean())
         warnings = self._warnings_global(last_obs)
         return {
-            "ok": True, "target_idx": target_idx, "target_date": str(self._dates[target_idx]),
+            "ok": True, "target_idx": target_idx, "target_date": str(next_calendar_day(self._dates[last_obs])),
             "u": u, "v": v, "speed": speed, "coverage": coverage,
             "source": source, "warnings": warnings,
             "elapsed_ms": round((time.perf_counter() - t_start) * 1000.0, 1),
@@ -449,7 +457,7 @@ class SimVPPredictor:
             return {"ok": False, "error": "date_not_in_dataset",
                     "message": f"数据集中不存在日期 {date}"}
         try:
-            u, v, target_idx, source = self._field_for_last_obs(last_obs)
+            u, v, target_idx, source = self._field_for_last_obs(last_obs, prefer_precomputed=False)
         except ValueError as exc:
             code = str(exc)
             msg = {"no_future_frame": "该日期已是数据集最后一帧，之后没有可用帧，无法预测",
@@ -466,8 +474,8 @@ class SimVPPredictor:
         pred["speed"] = round(float(math.hypot(pred["u"], pred["v"])), 3)
         pred["direction_deg"] = round(float(_direction_deg(pred["u"], pred["v"])), 2)
         series = self._series_24h(pred["u"], pred["v"], row, col, self._lat, self._lon)
-        series["target_date"] = str(self._dates[target_idx])
-        warns = self._warnings(row, col, last_obs, target_idx, pred["speed"], valid=valid)
+        series["target_date"] = str(next_calendar_day(self._dates[last_obs]))
+        warns = self._warnings(row, col, last_obs, pred["speed"], valid=valid)
         if not valid:
             warns.insert(0, {"code": "no_observation", "level": "info",
                              "message": "起报日该像元无有效观测（u/v=0），预测主要依赖邻域/季节特征"})
@@ -475,8 +483,8 @@ class SimVPPredictor:
         return {
             "ok": True,
             "date": str(self._dates[last_obs]),
-            "next_date": str(self._dates[target_idx]),
-            "next_idx": int(target_idx),
+            "next_date": str(next_calendar_day(self._dates[last_obs])),
+            "next_idx": target_idx,
             "u": pred["u"], "v": pred["v"], "speed": pred["speed"],
             "direction_deg": pred["direction_deg"],
             "input": inp | {"row": row, "col": col, "valid": valid,
@@ -499,7 +507,8 @@ class SimVPPredictor:
         d0 = np.datetime64(str(start), "D")
         d1 = np.datetime64(str(end), "D")
         avail_start, avail_end = str(dates.min()), str(dates.max())
-        sel = np.where((dates >= d0) & (dates <= d1))[0]
+        consecutive = dates - self._dates[target_idx - 1] == np.timedelta64(1, "D")
+        sel = np.where((dates >= d0) & (dates <= d1) & consecutive)[0]
         warnings = []
         if len(sel) == 0:
             return {"ok": False, "error": "backtest_out_of_range",
@@ -510,7 +519,6 @@ class SimVPPredictor:
                              "message": f"回测范围已裁剪至可用范围 {avail_start} ~ {avail_end}"})
         n_total = len(sel)
         if len(sel) > max_points:
-            step = len(sel) / float(max_points)
             sel = sel[np.linspace(0, len(sel) - 1, max_points).round().astype(int)]
         # 用原始 u/v 读取真值与持续性（目标帧在 zarr 中是连续区间，一次切片读出）
         series = []
@@ -520,6 +528,7 @@ class SimVPPredictor:
         v_seg = np.asarray(self._zarr["v"][lo:hi + 1, row, col], dtype=np.float32)
         pers_u = np.asarray(self._zarr["u"][lo - 1:hi, row, col], dtype=np.float32)
         pers_v = np.asarray(self._zarr["v"][lo - 1:hi, row, col], dtype=np.float32)
+        obs_valid = np.asarray(self._zarr["valid_mask"][lo:hi + 1, row, col], dtype=bool)[t_idx - lo]
         obs_u = u_seg[t_idx - lo]
         obs_v = v_seg[t_idx - lo]
         pers_u = pers_u[t_idx - lo]
@@ -529,14 +538,18 @@ class SimVPPredictor:
         for k, si in enumerate(sel):
             series.append({
                 "date": str(dates[si]),
-                "obs_u": float(round(float(obs_u[k]), 3)),
-                "obs_v": float(round(float(obs_v[k]), 3)),
-                "obs_speed": float(round(float(math.hypot(obs_u[k], obs_v[k])), 3)),
+                "obs_u": round(float(obs_u[k]), 3) if obs_valid[k] else None,
+                "obs_v": round(float(obs_v[k]), 3) if obs_valid[k] else None,
+                "obs_speed": round(math.hypot(obs_u[k], obs_v[k]), 3) if obs_valid[k] else None,
                 "pred_u": float(round(float(pred_u[k]), 3)),
                 "pred_v": float(round(float(pred_v[k]), 3)),
                 "pred_speed": float(round(float(math.hypot(pred_u[k], pred_v[k])), 3)),
             })
-        summary = _summary_from_series(series, pers_u, pers_v)
+        valid_series = [item for item, valid in zip(series, obs_valid) if valid]
+        summary = _summary_from_series(valid_series, pers_u[obs_valid], pers_v[obs_valid])
+        if not valid_series:
+            warnings.append({"code": "no_obs", "level": "warning",
+                             "message": "所选像元在回测区间内没有有效观测"})
         return {
             "ok": True,
             "available_start": avail_start,

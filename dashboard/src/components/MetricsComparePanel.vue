@@ -157,7 +157,7 @@ useEChart(el, option)
 const subtitle = computed(() => {
   const p = props.metrics?.protocol
   if (!p) return '统一评估协议 · 柱：RMSE / MAE（cm/s）· 线：技能分'
-  return `287 窗口 · ${(p.n_samples / 10000).toFixed(1)} 万样本 · 柱 RMSE/MAE · 线 技能分`
+  return `${fmtInt(p.n_windows)} 窗口 · ${(p.n_samples / 10000).toFixed(1)} 万样本 · 柱 RMSE/MAE · 线 技能分`
 })
 
 const hasData = computed(() => ordered.value.length > 0)

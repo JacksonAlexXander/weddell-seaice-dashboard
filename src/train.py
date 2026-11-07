@@ -63,6 +63,11 @@ def parse_args():
     p.add_argument("--synth", action="store_true")
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "mps"])
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--init-weights", default="", help="从既有 checkpoint 加载模型参数，重新初始化优化器")
+    p.add_argument("--head-only", action="store_true", help="仅微调 SimVP 最后一层预测头")
+    p.add_argument("--strict-daily", action="store_true", help="排除缺日或跨训练/验证/测试边界的窗口")
+    p.add_argument("--day1-weight", type=float, default=0.0, help="附加第 1 天速度变化监督权重")
+    p.add_argument("--selection-windows", type=int, default=0, help="均匀抽取验证窗口数（0=使用全部）")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--eval-only", action="store_true")
     p.add_argument("--ckpt", default="", help="eval-only 用的 checkpoint 路径")
@@ -279,13 +284,17 @@ def main():
     mk = lambda split, shuffle: WeddellMotionDataset(
         args.zarr, split, tin=args.tin, tout=args.tout, stride=args.stride,
         downsample=args.ds, add_doy=bool(args.add_doy), synth=args.synth,
-        seed=args.seed)
+        seed=args.seed, strict_daily=args.strict_daily)
     ds_tr = mk("train", True)
     ds_va = mk("val", False)
     print(f"[data] train={len(ds_tr)} val={len(ds_va)} frames={ds_tr.n_frames}")
     loader_tr = torch.utils.data.DataLoader(ds_tr, batch_size=args.batch,
                                             shuffle=True, num_workers=0)
-    loader_va = torch.utils.data.DataLoader(ds_va, batch_size=args.batch,
+    val_subset = ds_va
+    if 0 < args.selection_windows < len(ds_va):
+        indices = np.linspace(0, len(ds_va) - 1, args.selection_windows, dtype=int)
+        val_subset = torch.utils.data.Subset(ds_va, indices)
+    loader_va = torch.utils.data.DataLoader(val_subset, batch_size=args.batch,
                                             shuffle=False, num_workers=0)
 
     cin = 4 if args.add_doy else 2
@@ -319,8 +328,22 @@ def main():
                                   "ckpt": str(ckpt)})
         return
 
+    if args.init_weights:
+        state = torch.load(args.init_weights, map_location="cpu", weights_only=False)
+        model.load_state_dict(state["model"])
+        print(f"[init] {args.init_weights} epoch={state.get('epoch')}")
+        del state
+    if args.head_only:
+        if args.model != "simvp":
+            raise ValueError("--head-only 仅支持 SimVP")
+        model.requires_grad_(False)
+        model.dec.out.requires_grad_(True)
     model = model.to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
+    if args.init_weights:
+        baseline = evaluate(model, loader_va, ds_va, device, args.tout, args.model,
+                            target_residual=bool(args.target_residual))
+        print("[val/before]", json.dumps(baseline), flush=True)
+    opt = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr,
                             weight_decay=args.weight_decay)
     start_ep = 0
     best_val = float("inf")
@@ -362,6 +385,7 @@ def main():
             x = b["x"].to(device)
             y = b["y"].to(device)
             m = b["mask"].to(device)
+            history_valid = b["last_mask"].to(device)
             base = x[:, -1:, :2].expand_as(y)          # 最后一帧观测
             if args.model == "persistence":
                 out_raw = base
@@ -379,6 +403,17 @@ def main():
             loss = (masked_mse(pred_raw, y_raw, m)
                     + args.mae_weight * masked_mae(pred_raw, y_raw, m)
                     + args.grad_weight * grad_loss(pred_raw, y_raw, m))
+            if args.day1_weight:
+                # 与最后一次观测比较漂移变化，突出 24h 时效。
+                # 仅在起报日和目标日都有效的像元上计算，排除新生冰/缺测造成的伪变化。
+                joint = m[:, 0] * history_valid
+                recent = x[:, -1, :2]
+                observed_change = y[:, 0] - recent
+                predicted_change = pred[:, 0] - recent
+                change_weight = 1.0 + observed_change.abs().clamp(max=3.0)
+                loss = loss + args.day1_weight * masked_mae(
+                    (predicted_change - observed_change) * change_weight,
+                    torch.zeros_like(observed_change), joint)
             if args.div_reg > 0 and args.model == "simvp":
                 loss = loss + args.div_reg * differential_divergence(pred)
             opt.zero_grad(set_to_none=True)
@@ -402,7 +437,7 @@ def main():
         val["loss_train"] = loss.item()
         print(f"[val] ep={ep} " + json.dumps(
             {k: round(float(v), 4) for k, v in val.items()}), flush=True)
-        score = val["vec_rmse"]
+        score = val["vec_rmse_d1" if args.day1_weight else "vec_rmse"]
         is_best = score < best_val
         if is_best:
             bad_epochs = 0

@@ -26,16 +26,14 @@ def _num(value) -> float | None:
 
 
 def _resolve_default_date(store: ArtifactStore, data_time: dict) -> str:
-    """默认日期：优先设计推荐日（2025-06-26），否则倒数第二个有效帧（保证有下一帧可预测）。"""
+    """优先使用便于复现的推荐日期，找不到时从最新观测起报。"""
     preferred = store.settings.preferred_default_date
     try:
         adapter = store.data_adapter()
         idx = adapter.idx_of_date(preferred)
-        if idx is not None and idx < adapter.n_frames - 1:
+        if idx is not None:
             return preferred
-        if adapter.n_frames >= 2:
-            return adapter.date_str(adapter.n_frames - 2)
-        return adapter.date_str(0)
+        return adapter.date_str(adapter.n_frames - 1)
     except Exception:  # noqa: BLE001
         logger.debug("默认日期解析失败，回退 latest_date", exc_info=True)
     return str(data_time.get("latest_date") or preferred)
@@ -108,9 +106,8 @@ def build_models_payload(store: ArtifactStore) -> ModelsResponse:
             )
         )
 
-    default_model = "random_forest" if availability.get("random_forest") else next(
-        (mid for mid in MODEL_IDS if availability.get(mid)), "random_forest"
-    )
+    preferred = ("simvp", "random_forest", "ridge", "persistence", "climatology")
+    default_model = next((mid for mid in preferred if availability.get(mid)), "random_forest")
     default_date = _resolve_default_date(store, data_time_raw)
     default_cell = Cell(row=store.settings.default_row, col=store.settings.default_col)
 

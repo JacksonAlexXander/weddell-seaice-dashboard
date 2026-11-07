@@ -220,6 +220,7 @@ export function useDashboard() {
   async function loadField() {
     const token = ++fieldToken
     state.fieldLoading = true
+    state.observedField = null
     state.fieldError = null
     try {
       const res = await api.field({ date: state.selection.date, stride: 5 })
@@ -241,6 +242,7 @@ export function useDashboard() {
     if (!force && state.predictedField && state.predictedKey === key) return
     const token = ++predFieldToken
     state.predictedLoading = true
+    state.predictedField = null
     state.predictedError = null
     try {
       const res = await api.predictedField({ model, date, stride: 5 })
@@ -285,6 +287,7 @@ export function useDashboard() {
   }
 
   function clearPrediction() {
+    ++predictRunId
     state.prediction = null
     state.predictStatus = 'idle'
     state.predictError = null
@@ -301,7 +304,7 @@ export function useDashboard() {
     state.selectionTouched = true
     clearPrediction()
     if (state.mapMode === 'predicted') loadPredictedField()
-    if (state.backtest) loadBacktest()
+    if (state.backtest || state.backtestLoading) loadBacktest()
   }
 
   function setDate(date) {
@@ -327,6 +330,11 @@ export function useDashboard() {
     state.selection.col = nextCol
     state.selectionTouched = true
     clearPrediction()
+    ++backtestToken
+    state.backtest = null
+    state.backtestAt = null
+    state.backtestError = null
+    state.backtestLoading = false
   }
 
   function setMapMode(mode) {
@@ -384,8 +392,10 @@ export function useDashboard() {
     const token = ++backtestToken
     const range = state.backtestRange
     const end = dataTime.value?.latest_date || state.selection.date
-    const start = shiftDate(end, -range)
+    const start = shiftDate(end, 1 - range)
     state.backtestLoading = true
+    state.backtest = null
+    state.backtestAt = null
     state.backtestError = null
     try {
       const res = await api.backtest({

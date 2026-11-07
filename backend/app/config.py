@@ -5,7 +5,7 @@
     PREDICT_ZARR_PATH        zarr 数据集路径
     PREDICT_DASHBOARD_DIR    data/processed/dashboard artifacts 目录
     PREDICT_MODELS_ML_DIR    models/ml 模型目录
-    PREDICT_SIMVP_CKPT       models/simvp-v1/ckpt_best.pt
+    PREDICT_SIMVP_CKPT       models/simvp-24h/ckpt_best.pt
     PREDICT_DASHBOARD_DIST   dashboard/dist 前端构建产物目录
     PREDICT_WARMUP           1/0 是否在启动后后台预热引擎（默认 1）
     PREDICT_LOG_LEVEL        uvicorn/应用日志级别
@@ -72,11 +72,11 @@ MODEL_CATALOG: tuple[dict, ...] = (
     },
     {
         "id": "simvp",
-        "name": "SimVP-v1 深度学习",
-        "short": "SimVP",
+        "name": "SimVP 24h 微调",
+        "short": "SimVP 24h",
         "category": "deep",
         "color": "#f59e0b",
-        "description": "项目既有 9.3M 参数时空预测模型，输入 10 帧场预测未来 5 天，取 day-1。",
+        "description": "沿用原 SimVP 时空网络，针对首日漂移微调。输入 10 帧日漂移场，输出次日 u/v。",
         "is_baseline": False,
     },
     {
@@ -125,12 +125,12 @@ class Settings:
     zarr_path: Path = WORKSPACE_ROOT / "data/processed/weddell_icemotion_daily.zarr"
     dashboard_dir: Path = WORKSPACE_ROOT / "data/processed/dashboard"
     models_ml_dir: Path = WORKSPACE_ROOT / "models/ml"
-    simvp_ckpt: Path = WORKSPACE_ROOT / "models/simvp-v1/ckpt_best.pt"
+    simvp_ckpt: Path = WORKSPACE_ROOT / "models/simvp-24h/ckpt_best.pt"
     dashboard_dist: Path = WORKSPACE_ROOT / "dashboard/dist"
 
     # 服务元信息
     service_name: str = "weddell-seaice-ml"
-    version: str = "1.0.0"
+    version: str = "1.1.0"
 
     # 网格 / 物理常量
     grid_rows: int = GRID_ROWS
@@ -180,7 +180,7 @@ def load_settings() -> Settings:
     default_zarr = WORKSPACE_ROOT / "data/processed/weddell_icemotion_daily.zarr"
     default_dashboard = WORKSPACE_ROOT / "data/processed/dashboard"
     default_models = WORKSPACE_ROOT / "models/ml"
-    default_ckpt = WORKSPACE_ROOT / "models/simvp-v1/ckpt_best.pt"
+    default_ckpt = WORKSPACE_ROOT / "models/simvp-24h/ckpt_best.pt"
     default_dist = WORKSPACE_ROOT / "dashboard/dist"
     return Settings(
         zarr_path=_env_path("PREDICT_ZARR_PATH", default_zarr),

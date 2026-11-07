@@ -704,8 +704,9 @@ select {
 .control-bar {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 8px 12px;
   padding: 8px 12px;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);

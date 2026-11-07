@@ -412,6 +412,7 @@ class PredictDataTime(BaseModel):
     last_obs_date: str
     last_obs_index: int
     next_frame_date: str
+    target_observed: bool
     horizon_hours: int = 24
     latest_date: str
     n_frames: int

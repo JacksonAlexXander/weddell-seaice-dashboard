@@ -21,7 +21,7 @@ REQUIRED = [
     "data/processed/dashboard/climatology.npz",
     "data/processed/dashboard/simvp_day1_fields.npz",
     "models/ml/ridge.joblib", "models/ml/rf.joblib",
-    "models/simvp-v1/ckpt_best.pt",
+    "models/simvp-24h/ckpt_best.pt",
 ]
 
 def main():
@@ -38,7 +38,7 @@ def main():
         return 1
     missing = [f for f in REQUIRED if not (ROOT / f).is_file()]
     if missing:
-        print("Missing runtime assets. Download the full ZIP from GitHub Releases, not 'Source code'.")
+        print("Missing runtime assets. Verify the data, model weights and dashboard build are present.")
         print("\n".join(missing))
         return 1
     env_dir = ROOT / ".venv"

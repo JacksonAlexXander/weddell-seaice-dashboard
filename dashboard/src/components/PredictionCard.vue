@@ -73,7 +73,7 @@ function fmtNum(v, d = 2) {
           <span class="pred-speed-unit">cm/s</span>
           <span class="pred-speed-label">预测漂移速度</span>
         </div>
-        <div class="compass" :title="`方向 ${fmtNum(bearing, 1)}°（${compass.zh}）`">
+        <div class="compass" :title="`地理方位角 ${fmtNum(bearing, 1)}°（${compass.zh}）`">
           <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
             <circle cx="20" cy="20" r="15" stroke="rgba(56,189,248,.18)" stroke-width=".8" />
             <path d="M20 5.5v3M20 31.5v3M5.5 20h3M31.5 20h3" stroke="rgba(125,211,252,.5)" stroke-width=".9" />

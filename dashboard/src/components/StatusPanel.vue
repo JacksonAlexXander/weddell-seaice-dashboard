@@ -21,7 +21,8 @@ const dtRows = computed(() => {
   const d = props.dataTime
   const rows = [
     { label: '起报日', value: p?.last_obs_date || props.selection.date, cy: true },
-    { label: '目标帧', value: p?.next_frame_date || '—', cy: true },
+    { label: '24h 目标日', value: p?.next_frame_date || '—', cy: true },
+    { label: '目标日观测', value: !p ? '—' : p.target_observed === false ? '本批次无观测' : '本批次已收录' },
     { label: '最新数据', value: d?.latest_date || '—' },
     { label: '数据批次', value: d?.built_at ? fmtUtc(d.built_at).slice(0, 10) : '—' },
     { label: '总帧数', value: d?.n_frames ? fmtInt(d.n_frames) : '—' },

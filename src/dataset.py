@@ -32,7 +32,7 @@ class WeddellMotionDataset(Dataset):
     def __init__(self, zarr_path: str, split: str = "train", *, tin: int = 6,
                  tout: int = 6, stride: int = 3, downsample: int = 1,
                  add_doy: bool = True, synth: bool = False,
-                 seed: int = 42, pad: bool = True):
+                 seed: int = 42, pad: bool = True, strict_daily: bool = False):
         assert split in SPLITS, split
         self.split = split
         self.tin, self.tout, self.stride = tin, tout, stride
@@ -71,6 +71,11 @@ class WeddellMotionDataset(Dataset):
         lo, hi = SPLITS[split]
         idx = np.where((years >= lo) & (years <= hi))[0]
         self.idx = idx[idx <= self.n_frames - (tin + tout)]
+        if strict_daily and not synth:
+            end = self.idx + tin + tout - 1
+            dates = self._time.astype("datetime64[D]")
+            inside = (years[end] <= hi) & (dates[end] - dates[self.idx] == np.timedelta64(tin + tout - 1, "D"))
+            self.idx = self.idx[inside]
         self._synth = synth
 
     def _years(self):
@@ -124,7 +129,7 @@ class WeddellMotionDataset(Dataset):
         x = torch.stack(chans, dim=1)                       # (T_in, C_in, H, W)
         y = torch.stack([torch.from_numpy(yu), torch.from_numpy(yv)], dim=1)
         ymask = torch.from_numpy(ym).unsqueeze(1)           # (T_out, 1, H, W)
-        return {"x": x, "y": y, "mask": ymask, "t0": t0}
+        return {"x": x, "y": y, "mask": ymask, "last_mask": torch.from_numpy(xm[-1:]), "t0": t0}
 
     def _aligned_stats(self, u_or_v: int):
         """返回与 pad/降采样后网格对齐的 (mean, std) 张量 (H, W)。"""

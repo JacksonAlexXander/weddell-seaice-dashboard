@@ -20,7 +20,7 @@ WATCH = [
     ROOT / "models/ml/ridge.joblib",
     ROOT / "models/ml/rf.joblib",
     ROOT / "models/simvp-v1/ckpt_best.pt",
-    ROOT / "models/simvp-v1/ckpt_last.pt",
+    ROOT / "models/simvp-24h/ckpt_best.pt",
 ]
 
 
@@ -67,14 +67,13 @@ def main():
             r = c.post("/api/predict", json=body)
             ms = (time.perf_counter() - t0) * 1000.0
             if r.status_code != 200:
-                print(f"[warn] predict {mid} -> {r.status_code}: {r.text[:200]}")
-                continue
+                raise RuntimeError(f"predict {mid} -> {r.status_code}: {r.text[:200]}")
             latencies.append((mid, ms))
             calls += 1
         # 变化像元，触发不同推理路径
         for row, col in ((40, 40), (80, 120)):
             c.post("/api/predict", json={"model": "random_forest", "date": args.date,
-                                         "cell": {"row": row, "col": col}})
+                                         "cell": {"row": row, "col": col}}).raise_for_status()
             calls += 1
     print(f"共调用 /api/predict {calls} 次；延迟: " + ", ".join(
         f"{m}:{ms:.0f}ms" for m, ms in latencies[::3]))

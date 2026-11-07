@@ -7,13 +7,14 @@
   data/processed/dashboard/metrics_simvp.json      # 统一评估协议上的 SimVP 指标（Lead 合并进 metrics.json）
   data/processed/dashboard/simvp_day1_fields.npz   # 预计算 day-1 场（test 期，供回测/预测场秒级响应）
 
-评估协议：data/processed/dashboard/eval_windows.json（项目 test split + stride=5，287 个窗口，
-与 reports/final_report.md 的 SimVP 测试口径一致）。预期 day-1 vec_rmse ≈ 9.79 cm/s（±0.1）。
+评估协议：从项目 2022–2025 测试窗中保留连续 10 日输入及次日观测。
+使用 --update-combined 生成同一组样本上的 Ridge、RF、SimVP 和基线指标。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -27,7 +28,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-from src.serving.simvp import SimVPPredictor  # noqa: E402
+from src.serving.simvp import DEFAULT_CKPT, SimVPPredictor  # noqa: E402
+from src.predict.common import atomic_write_json
+from src.predict.metrics import vec_metrics
 
 EVAL_WINDOWS = ROOT / "data/processed/dashboard/eval_windows.json"
 OUT_METRICS = ROOT / "data/processed/dashboard/metrics_simvp.json"
@@ -141,13 +144,15 @@ def run_eval(predictor: SimVPPredictor, windows: list[dict], limit: int = 0) -> 
     return res
 
 
-def run_precompute(predictor: SimVPPredictor, limit: int = 0) -> dict:
+def run_precompute(predictor: SimVPPredictor, out_fields: Path, limit: int = 0) -> dict:
     predictor._ensure_zarr()
     dates = predictor._dates
     years = dates.astype("datetime64[Y]").astype(int) + 1970
     test_mask = (years >= 2022) & (years <= 2025)
     target_idx = np.where(test_mask)[0]
     target_idx = target_idx[target_idx >= 1]  # 需要前一帧作为起报帧
+    adjacent = dates[target_idx] - dates[target_idx - 1] == np.timedelta64(1, "D")
+    target_idx = target_idx[adjacent]
     if limit:
         target_idx = target_idx[:limit]
     n = len(target_idx)
@@ -166,12 +171,59 @@ def run_precompute(predictor: SimVPPredictor, limit: int = 0) -> dict:
             eta = el / (k + 1) * (n - k - 1)
             log(f"[precompute] {k + 1}/{n} ({el:.0f}s, ETA {eta:.0f}s)")
     out_dates = dates[target_idx].astype("datetime64[s]")
-    tmp = OUT_FIELDS.with_suffix(".tmp.npz")
+    with predictor.ckpt_path.open("rb") as checkpoint:
+        digest = hashlib.file_digest(checkpoint, "sha256").hexdigest()
+    tmp = out_fields.with_suffix(".tmp.npz")
     np.savez_compressed(tmp, dates=out_dates, target_idx=target_idx.astype(np.int32),
-                        u=u_out, v=v_out)
-    tmp.replace(OUT_FIELDS)
-    log(f"[precompute] saved {OUT_FIELDS} ({OUT_FIELDS.stat().st_size / 1e6:.1f} MB)")
+                        u=u_out, v=v_out, checkpoint_sha256=digest)
+    tmp.replace(out_fields)
+    log(f"[precompute] saved {out_fields} ({out_fields.stat().st_size / 1e6:.1f} MB)")
     return {"n": int(n), "range": [str(dates[target_idx].min()), str(dates[target_idx].max())]}
+
+
+def same_test_windows(predictor: SimVPPredictor) -> list[dict]:
+    """从原测试协议中保留连续 10 日输入和严格 24h 目标的窗口。"""
+    predictor._ensure_zarr()
+    dates = predictor._dates
+    return [
+        window for window in load_eval_windows()
+        if dates[window["truth_idx"]] - dates[window["input_start"]]
+        == np.timedelta64(predictor.tin, "D")
+    ]
+
+
+def update_combined(out_dir: Path, windows: list[dict], model_entry: dict, result: dict) -> None:
+    import pyarrow.parquet as pq
+
+    ids = ("ridge", "random_forest", "persistence", "climatology")
+    columns = ["window", "obs_u", "obs_v"] + [f"{mid}_{axis}" for mid in ids for axis in ("u", "v")]
+    data = pq.read_table(EVAL_WINDOWS.parent / "eval_day1.parquet", columns=columns)
+    accepted = {window["truth_idx"] for window in windows}
+    keep = np.isin(data["window"].to_numpy(), [
+        i for i, w in enumerate(load_eval_windows()) if w["truth_idx"] in accepted
+    ])
+    data = data.filter(keep)
+
+    def pairs(name):
+        return np.column_stack([data[f"{name}_{axis}"].to_numpy() for axis in ("u", "v")])
+
+    truth, persistence = pairs("obs"), pairs("persistence")
+    if len(truth) != result["eval_day1"]["n_samples"]:
+        raise RuntimeError("时空模型和表格模型评估样本数不一致")
+    tabular = json.loads((EVAL_WINDOWS.parent / "metrics_tabular.json").read_text())
+    tabular["generated_at"] = result["generated_at"]
+    tabular["protocol"].update(
+        sampling=f"2022–2025 留出期：每 5 帧抽样，仅保留连续 10 日输入及次日真值（{len(windows)} 窗口），使用全部有效像元",
+        n_windows=len(windows),
+        n_samples=len(truth),
+    )
+    tabular["protocol"].pop("reference", None)
+    for item in tabular["models"]:
+        item.update({key: round(value, 4) for key, value in
+                     vec_metrics(pairs(item["id"]), truth, pers=persistence).items()})
+    atomic_write_json(out_dir / "metrics_tabular.json", tabular)
+    combined = {**tabular, "models": [*tabular["models"], model_entry]}
+    atomic_write_json(out_dir / "metrics.json", combined)
 
 
 def main():
@@ -180,81 +232,65 @@ def main():
     ap.add_argument("--precompute", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="仅处理前 N 个（调试）")
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--ckpt", type=Path, default=DEFAULT_CKPT)
+    ap.add_argument("--compare-ckpt", type=Path)
+    ap.add_argument("--out-dir", type=Path, default=OUT_METRICS.parent)
+    ap.add_argument("--update-combined", action="store_true")
     args = ap.parse_args()
     if not (args.eval or args.precompute):
         args.eval = args.precompute = True
+    if args.update_combined and (not args.eval or args.limit):
+        ap.error("--update-combined 需要完整评估")
 
     t0 = time.time()
-    predictor = SimVPPredictor(device=args.device)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    predictor = SimVPPredictor(device=args.device, ckpt=args.ckpt, precomputed=None)
     st = predictor.load()
     if not st["loaded"]:
         raise SystemExit(f"SimVP checkpoint 加载失败: {st['error']}")
     log(f"[load] device={st['device']} ckpt_epoch={predictor._ckpt_epoch} best_val={predictor._ckpt_best_val}")
-    log(f"[load] state={json.dumps(st, ensure_ascii=False)}")
-
+    checkpoint = args.ckpt.resolve().relative_to(ROOT)
+    tuned = predictor._init_weights is not None
     out = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "ckpt": str(predictor.ckpt_path.relative_to(ROOT)),
-        "ckspt_epoch": predictor._ckpt_epoch,
-        "ckpt_best_val": predictor._ckpt_best_val,
+        "ckpt": str(checkpoint),
+        "checkpoint_epoch": predictor._ckpt_epoch,
+        "checkpoint_best_val": predictor._ckpt_best_val,
         "device": st["device"],
     }
     if args.eval:
-        windows = load_eval_windows()
-        log(f"[eval] {len(windows)} windows from eval_windows.json")
-        ev = run_eval(predictor, windows, args.limit)
-        out["eval_day1"] = ev
-        log(f"[eval] result: {json.dumps(ev, ensure_ascii=False)}")
+        windows = same_test_windows(predictor)
+        log(f"[eval] {len(windows)} consecutive windows")
+        out["eval_day1"] = run_eval(predictor, windows, args.limit)
+        log(f"[eval] result: {json.dumps(out['eval_day1'], ensure_ascii=False)}")
+        if args.compare_ckpt:
+            baseline = SimVPPredictor(device=args.device, ckpt=args.compare_ckpt, precomputed=None)
+            baseline._ensure_zarr()
+            out["original_checkpoint_eval"] = run_eval(baseline, windows, args.limit)
+            del baseline
+            log(f"[eval/original] {json.dumps(out['original_checkpoint_eval'], ensure_ascii=False)}")
     if args.precompute:
-        pc = run_precompute(predictor, args.limit)
-        out["precompute"] = pc
+        out["precompute"] = run_precompute(predictor, args.out_dir / OUT_FIELDS.name, args.limit)
 
-    # 模型卡片（字段与设计 §3 一致；Lead 合并进最终 metrics.json）
+    name = "SimVP 24h 微调" if tuned else "SimVP-v1 深度学习"
     model_entry = {
-        "id": "simvp",
-        "name": "SimVP-v1 深度学习",
-        "name_zh": "SimVP-v1 深度学习",
-        "short": "SimVP",
-        "category": "deep",
-        "description": "项目既有 SimVP-gSTA 风格时空预测模型（~9.3M 参数，10 帧输入→5 天场，取 day-1）；"
-                       "25 km 原生网格，加载 ckpt_best@ep22 推理，不重新训练。",
-        "trained_at": "2026-10-26T00:20:00Z",
-        "training_samples": None,
-        "params": {"tin": 10, "tout": 5, "chid": 128, "params_m": 9.3,
-                   "ckpt": str(predictor.ckpt_path.relative_to(ROOT)),
-                   "device": st["device"], "epoch": predictor._ckpt_epoch},
-        "artifact_source": "models/simvp-v1/ckpt_best.pt（项目既有训练产物）",
-        "is_baseline": False,
-        "reference_report": {
-            "note": "项目 reports/final_report.md §5.2 的 day-1 vec_rmse=9.7938 采用 evaluate() 的"
-                    "「逐 batch MSE 等权」聚合（batch=8，等价于每个起报窗口等权，夏季低覆盖窗口被放大权重）；"
-                    "本统一协议按全部有效像元池化（pooled）聚合，供 Ridge/RF/SimVP 公平比较。",
-            "report_day1_vec_rmse_batchweighted": 9.7938,
-        },
+        "id": "simvp", "name": name, "name_zh": name,
+        "short": "SimVP 24h" if tuned else "SimVP",
+        "category": "deep", "color": "#f59e0b", "is_baseline": False,
+        "description": "10 帧日漂移场输入，取第 1 天预测。保留空间门控、时间混合与季节通道。",
+        "trained_at": datetime.fromtimestamp(args.ckpt.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+        "params": {"tin": predictor.tin, "tout": predictor.tout, "chid": predictor.chid,
+                   "ckpt": str(checkpoint), "device": st["device"], "epoch": predictor._ckpt_epoch},
+        "artifact_source": str(checkpoint),
     }
     if "eval_day1" in out:
         ev = out["eval_day1"]
-        model_entry.update({
-            "vec_rmse": ev["vec_rmse"], "rmse_u": ev["rmse_u"], "rmse_v": ev["rmse_v"],
-            "mae_vec": ev["mae_vec"], "r2_u": ev["r2_u"], "r2_v": ev["r2_v"],
-            "skill_vs_persistence": ev["skill_vs_persistence"],
-            "latency_ms": ev["latency_ms"]["median"],
-        })
-    with open(OUT_METRICS, "w", encoding="utf-8") as f:
-        json.dump({
-            "generated_at": out["generated_at"],
-            "model": model_entry,
-            "eval": out.get("eval_day1"),
-            "precompute": out.get("precompute"),
-            "protocol": {
-                "task": "未来 24 小时（下一日帧）海冰漂移矢量预测",
-                "sampling": "test split 每 5 日一个起报窗口（287 窗口），评估全部有效像元",
-                "aggregation": "按全部有效像元池化（pooled：vec_rmse=sqrt(mean(Δu²+Δv²)))",
-                "n_samples": out.get("eval_day1", {}).get("n_samples"),
-                "source_windows": "data/processed/dashboard/eval_windows.json",
-            },
-        }, f, ensure_ascii=False, indent=1)
-    log(f"[save] {OUT_METRICS}")
+        model_entry.update({key: ev[key] for key in
+                            ("vec_rmse", "rmse_u", "rmse_v", "mae_vec", "r2_u", "r2_v", "skill_vs_persistence")})
+        model_entry["latency_ms"] = ev["latency_ms"]["median"]
+    atomic_write_json(args.out_dir / OUT_METRICS.name, {**out, "model": model_entry})
+    if args.update_combined:
+        update_combined(args.out_dir, windows, model_entry, out)
     log(f"[done] {time.time() - t0:.1f}s")
 
 

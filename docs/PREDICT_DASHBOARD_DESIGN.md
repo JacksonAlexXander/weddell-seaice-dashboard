@@ -1,5 +1,7 @@
 # 海冰漂移 ML 预测服务 + 可视化大屏 —— 总体设计
 
+本文记录原版设计。现行模型、评估窗口和数据批次见[训练与回测记录](训练与回测.md)，接口以当前 API 契约为准。
+
 > 版本 v1（2026-10-26）｜Owner: Lead｜读者：ml-tabular / backend-api / frontend-ui 三个 teammate
 > 本文件是**唯一设计事实源**；API 字段级契约见 [`PREDICT_API_CONTRACT.md`](PREDICT_API_CONTRACT.md)。
 

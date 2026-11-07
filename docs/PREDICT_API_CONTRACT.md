@@ -68,7 +68,7 @@
       "is_baseline": false
     },
     {
-      "id": "simvp", "name": "SimVP-v1 深度学习", "short": "SimVP",
+      "id": "simvp", "name": "SimVP 24h 微调", "short": "SimVP",
       "category": "deep", "color": "#f59e0b", "available": true, "description": "项目既有 9.3M 参数时空预测模型……",
       "trained_at": "2026-10-26T00:20:00Z", "training_samples": null,
       "metrics": { "vec_rmse": 9.794, "skill_vs_persistence": 0.10, "latency_ms": 320.0 },
@@ -105,9 +105,9 @@
     "task": "未来 24 小时（下一日帧）海冰漂移矢量预测",
     "target": "u(t+1), v(t+1)，cm/s，25 km EASE-Grid South 像元",
     "split": { "train": "1978–2017", "val": "2018–2021", "test": "2022–2025" },
-    "sampling": "test split 每 5 日一个起报窗口（287 个窗口），评估全部有效像元",
-    "n_windows": 287,
-    "n_samples": 1556493,
+    "sampling": "test split 每 5 日一个起报窗口（277 个连续日窗口），评估全部有效像元",
+    "n_windows": 277,
+    "n_samples": 1509249,
     "metric_defs": {
       "vec_rmse": "√mean(Δu²+Δv²)，cm/s",
       "mae_vec": "mean(√(Δu²+Δv²))，cm/s",
@@ -132,7 +132,7 @@
       "params": { "n_estimators": 250, "max_depth": null, "min_samples_leaf": 4 }, "training_samples": 2143000,
       "is_highlight": true, "is_baseline": false
     },
-    { "id": "simvp", "name": "SimVP-v1 深度学习", "category": "deep", "vec_rmse": 9.79, "...": "同结构", "is_baseline": false },
+    { "id": "simvp", "name": "SimVP 24h 微调", "category": "deep", "vec_rmse": 9.79, "...": "同结构", "is_baseline": false },
     { "id": "persistence", "name": "持续性基线", "category": "baseline", "vec_rmse": 10.91, "skill_vs_persistence": 0.0, "is_baseline": true },
     { "id": "climatology", "name": "气候态基线", "category": "baseline", "vec_rmse": 12.36, "is_baseline": true }
   ],
@@ -221,6 +221,8 @@ Query：`model`（必填，任意已可用模型 id）｜`date`（必填）
 
 **真实推理接口**。请求指定模型 + 最后观测日 + 像元；后端读取该日期前的真实历史数据、
 构造特征/输入场、调用**已训练模型**推理（不训练、不写模型文件），返回 JSON。
+目标为起报日之后的下一自然日。数据集最新观测日可以起报。响应中的 target_observed
+表示目标日是否有数据帧。缺日或超出数据批次时仍返回 24 小时预报，并提示 target_unobserved。
 
 ### 请求
 
@@ -245,6 +247,7 @@ Query：`model`（必填，任意已可用模型 id）｜`date`（必填）
     "last_obs_date": "2025-06-26",
     "last_obs_index": 17000,
     "next_frame_date": "2025-06-27",
+    "target_observed": true,
     "horizon_hours": 24,
     "latest_date": "2025-12-30",
     "n_frames": 17188
@@ -252,14 +255,14 @@ Query：`model`（必填，任意已可用模型 id）｜`date`（必填）
   "input": {
     "row": 65, "col": 60, "lat": -68.04, "lon": -33.2,
     "date": "2025-06-26",
-    "u": 17.21, "v": 5.04, "speed": 17.93, "direction_deg": 16.3,   // 矢量方向（度，0=东，逆时针）
+    "u": 17.21, "v": 5.04, "speed": 17.93, "direction_deg": 16.3,   // 网格矢量方向（度，从 EASE-Grid +x 轴逆时针）
     "valid": true, "coverage": 0.413
   },
   "prediction": {
     "u": 16.72, "v": 4.81, "speed": 17.40, "direction_deg": 16.1,
     "unit": "cm/s",
     "displacement_km_24h": 15.03,
-    "bearing_deg": 16.1,
+    "bearing_deg": 81.2, // 地理初始方位，从真北顺时针
     "delta_speed_vs_persistence": -0.53
   },
   "series_24h": {
@@ -298,7 +301,7 @@ Query：`model`（必填，任意已可用模型 id）｜`date`（必填）
 ## `POST /api/backtest`
 
 历史回测：真实值 vs 模型预测（逐日）。返回的 `series[i].date` 是**目标日**（预测日），
-`obs_*` 是目标日真值，`pred_*` 是模型从上一帧出发的预测。
+`obs_*` 是目标日真值，`pred_*` 是模型从前一自然日出发的预测。回测仅使用相邻观测日。目标像元缺测时真值返回 null，误差汇总跳过该样本。
 
 ### 请求
 

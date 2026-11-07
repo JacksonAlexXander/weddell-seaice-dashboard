@@ -5,7 +5,7 @@
    /api/field/predicted、POST /api/predict、POST /api/backtest、/docs、静态托管；
 2. 错误路径：未知模型 404、非法 cell 400、非法日期 422、无效范围 422、错误体格式；
 3. 契约字段结构 / 数值范围（predict 的 series_24h、位移换算、方向、不确定度带）；
-4. 不重训验证：predict 前后 models/ml/*.joblib 与 models/simvp-v1/*.pt mtime 不变、无新文件；
+4. 不重训验证：predict 前后 models/ml/*.joblib 与 models/simvp-24h/*.pt mtime 不变、无新文件；
 5. artifacts/引擎缺失时自动 skip（pytest.mark.skipif）；
 6. monkeypatch 假引擎覆盖路由逻辑（不依赖真实 artifacts）。
 
@@ -30,8 +30,7 @@ ZARR_PATH = ROOT / "data/processed/weddell_icemotion_daily.zarr"
 DASH_DIR = ROOT / "data/processed/dashboard"
 ML_DIR = ROOT / "models/ml"
 MODELS_DIR = ROOT / "models"
-SIMVP_CKPT = MODELS_DIR / "simvp-v1/ckpt_best.pt"
-SIMVP_LAST_CKPT = MODELS_DIR / "simvp-v1/ckpt_last.pt"
+SIMVP_CKPT = MODELS_DIR / "simvp-24h/ckpt_best.pt"
 
 DEFAULT_DATE = "2025-06-26"
 DEFAULT_CELL = {"row": 65, "col": 60}
@@ -748,12 +747,15 @@ def test_predict_errors(fresh_client):
     assert missing_field.status_code == 422
     _assert_error_body(missing_field, "validation_error")
 
-    # 数据集最后一帧没有下一帧
+    # 数据集最后一帧可以起报，目标日暂缺观测
     last_frame = fresh_client.post(
         "/api/predict", json={"model": "ridge", "date": "2025-12-30", "cell": DEFAULT_CELL}
     )
-    assert last_frame.status_code == 422
-    assert last_frame.json()["error"]["code"] == "date_invalid"
+    assert last_frame.status_code == 200, last_frame.text
+    payload = last_frame.json()
+    assert payload["data_time"]["target_observed"] is False
+    assert payload["series_24h"]["target_date"] == "2025-12-31"
+    assert any(warning["code"] == "target_unobserved" for warning in payload["warnings"])
 
 
 def test_backtest_errors(fresh_client):
@@ -1247,3 +1249,25 @@ def test_engine_hot_reload_on_artifact_replace(tmp_path):
     assert fake.warmups == 1
     assert store.engine_generation == 6
     assert store.maybe_reload_engine() is False
+
+
+def test_simvp_remains_available_during_initial_load(monkeypatch, tmp_path):
+    from backend.app.config import get_settings
+    from backend.app.services.artifact_store import ArtifactStore
+
+    checkpoint = tmp_path / "checkpoint.pt"
+    checkpoint.touch()
+    store = ArtifactStore(replace(get_settings(), simvp_ckpt=checkpoint))
+
+    class StartingPredictor:
+        def __init__(self, **kwargs):
+            self.state = {"loaded": False}
+
+        def load(self):
+            assert store.model_available("simvp")
+            self.state["loaded"] = True
+            return self.state
+
+    monkeypatch.setattr("src.serving.simvp.SimVPPredictor", StartingPredictor)
+    assert isinstance(store.ensure_simvp(), StartingPredictor)
+    assert store.model_available("simvp")

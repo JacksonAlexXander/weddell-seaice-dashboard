@@ -51,6 +51,9 @@ const dateMax = computed(() => props.dataTime?.latest_date || '2025-12-30')
 function onModel(e) {
   emit('model-change', e.target.value)
 }
+function useLatestDate() {
+  if (props.dataTime?.latest_date) emit('date-change', props.dataTime.latest_date)
+}
 function onDate(e) {
   if (e.target.value) emit('date-change', e.target.value)
 }
@@ -94,9 +97,15 @@ function onCol(e) {
         :min="dateMin"
         :max="dateMax"
         :disabled="predictStatus === 'running'"
-        title="作为起报日：预测其后下一帧（约 24h）的海冰漂移"
+        title="作为起报日，预测下一自然日的海冰漂移"
         @change="onDate"
       />
+      <button
+        type="button"
+        class="mini-btn"
+        :disabled="!dataTime?.latest_date || predictStatus === 'running'"
+        @click="useLatestDate"
+      >用最新观测</button>
     </div>
 
     <div class="ctl-group">
@@ -110,7 +119,7 @@ function onCol(e) {
           max="115"
           step="1"
           :disabled="predictStatus === 'running'"
-          title="row（行，向北增大），0–115"
+          title="row（行，沿 EASE-Grid y 轴增大），0–115"
           @change="onRow"
         />
         <span class="cell-unit">行</span>
@@ -122,7 +131,7 @@ function onCol(e) {
           max="157"
           step="1"
           :disabled="predictStatus === 'running'"
-          title="col（列，向东增大），0–157"
+          title="col（列，沿 EASE-Grid x 轴增大），0–157"
           @change="onCol"
         />
         <span class="cell-unit">列</span>

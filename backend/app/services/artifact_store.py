@@ -483,7 +483,6 @@ class ArtifactStore:
             if self._engine_attempted and self._engine is None:
                 # 已尝试失败：允许后续 warmup 再试一次
                 pass
-            self._engine_attempted = True
             t0 = time.perf_counter()
             try:
                 from src.predict.engine import PredictionEngine  # 延迟 import
@@ -504,6 +503,8 @@ class ArtifactStore:
                 self._engine_error = f"{type(exc).__name__}: {exc}"
                 self._engine_load_ms = round((time.perf_counter() - t0) * 1000.0, 1)
                 logger.warning("PredictionEngine 加载失败：%s", self._engine_error)
+            finally:
+                self._engine_attempted = True
             return self._engine
 
     def simvp_or_none(self):
@@ -523,7 +524,6 @@ class ArtifactStore:
         with self._simvp_lock:
             if self._simvp is not None and self._simvp.state.get("loaded"):
                 return self._simvp
-            self._simvp_attempted = True
             t0 = time.perf_counter()
             try:
                 from src.serving.simvp import SimVPPredictor  # 延迟 import
@@ -553,10 +553,11 @@ class ArtifactStore:
                     logger.warning("SimVPPredictor 加载失败：%s", self._simvp_error)
             except Exception as exc:  # noqa: BLE001
                 self._simvp = None
-                self._simvp_attempted = True
                 self._simvp_error = f"{type(exc).__name__}: {exc}"
                 self._simvp_load_ms = round((time.perf_counter() - t0) * 1000.0, 1)
                 logger.warning("SimVPPredictor 加载失败：%s", self._simvp_error)
+            finally:
+                self._simvp_attempted = True
             return self._simvp if self._simvp_error is None else None
 
     # ==================================================================

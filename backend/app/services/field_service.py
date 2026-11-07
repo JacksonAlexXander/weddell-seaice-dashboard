@@ -8,6 +8,8 @@ import time
 from typing import Any
 
 import numpy as np
+
+from src.predict.common import next_calendar_day
 from pydantic_core import PydanticCustomError
 
 from ..config import (
@@ -35,27 +37,17 @@ def _msg_text(value: object) -> str:
 # 几何 / 序列化工具
 # ---------------------------------------------------------------------------
 def direction_deg(u: float, v: float) -> float:
-    """矢量方向（度，0=东，逆时针为正，EASE x/y 分量）。"""
+    """从 EASE-Grid 正 x 轴逆时针计的网格角度。"""
     return float(np.mod(np.degrees(np.arctan2(v, u)), 360.0))
 
 
-def bilinear(grid: np.ndarray, rows: np.ndarray | float, cols: np.ndarray | float) -> np.ndarray:
-    """在 (H,W) 网格上对小数 (row, col) 双线性插值（越界裁剪到边缘）。"""
-    h, w = grid.shape
-    r = np.clip(np.asarray(rows, dtype=np.float64), 0, h - 1.000001)
-    c = np.clip(np.asarray(cols, dtype=np.float64), 0, w - 1.000001)
-    r0 = np.floor(r).astype(int)
-    c0 = np.floor(c).astype(int)
-    r1 = np.minimum(r0 + 1, h - 1)
-    c1 = np.minimum(c0 + 1, w - 1)
-    dr = r - r0
-    dc = c - c0
-    return (
-        grid[r0, c0] * (1 - dr) * (1 - dc)
-        + grid[r0, c1] * (1 - dr) * dc
-        + grid[r1, c0] * dr * (1 - dc)
-        + grid[r1, c1] * dr * dc
-    )
+def initial_bearing(lat0: float, lon0: float, lat1: float, lon1: float) -> float:
+    """球面初始真方位角，从地理北顺时针计。"""
+    phi0, phi1, delta_lon = map(math.radians, (lat0, lat1, lon1 - lon0))
+    east = math.sin(delta_lon) * math.cos(phi1)
+    north = (math.cos(phi0) * math.sin(phi1)
+             - math.sin(phi0) * math.cos(phi1) * math.cos(delta_lon))
+    return math.degrees(math.atan2(east, north)) % 360.0
 
 
 def serialize_speed_grid(speed: np.ndarray, mask: np.ndarray) -> list[list[float | None]]:
@@ -150,8 +142,16 @@ def series_24h(
     speed_series = [round(speed, 3) for _ in hours]
     rows = [row + v * CELLS_PER_CM_S_DAY * (h / 24.0) for h in hours]
     cols = [col + u * CELLS_PER_CM_S_DAY * (h / 24.0) for h in hours]
-    lats = [round(float(x), 5) for x in bilinear(lat_grid, np.asarray(rows), np.asarray(cols))]
-    lons = [round(float(x), 5) for x in bilinear(lon_grid, np.asarray(rows), np.asarray(cols))]
+    # EPSG:3409 南极等面积投影采用半径 6371228 m 的球体。
+    # 用源像元的经纬度还原起点，再反投影逐时平移的位置（包含越出裁剪网格的位置）。
+    radius = 6371228.0
+    lat0 = math.radians(float(lat_grid[row, col]))
+    lon0 = math.radians(float(lon_grid[row, col]))
+    rho = 2.0 * radius * math.sin((math.pi / 2 + lat0) / 2)
+    x = rho * math.sin(lon0) + u * 36.0 * np.asarray(hours)
+    y = rho * math.cos(lon0) + v * 36.0 * np.asarray(hours)
+    lats = np.round(np.degrees(2 * np.arcsin(np.hypot(x, y) / (2 * radius)) - np.pi / 2), 7).tolist()
+    lons = np.round(np.degrees(np.arctan2(x, y)), 7).tolist()
     uncertainty_block = None
     if isinstance(uncertainty, dict):
         method = str(uncertainty.get("method") or "模型不确定度")
@@ -374,13 +374,15 @@ class FieldService:
             logger.warning("帧读取失败 idx=%s: %s", idx, exc)
             raise APIError(503, "artifact_unavailable", "数据帧读取失败") from exc
 
-    def _target_date(self, adapter, idx: int) -> str | None:
-        try:
-            return adapter.date_str(adapter.next_idx(idx))
-        except ValueError:
-            return None
-        except Exception:  # noqa: BLE001
-            return None
+    @staticmethod
+    def target_for(adapter, date: str) -> tuple[str, int | None]:
+        target_date = str(next_calendar_day(date))
+        return target_date, adapter.idx_of_date(target_date)
+
+    @staticmethod
+    def missing_truth_warning(target_date: str) -> dict:
+        return {"code": "target_unobserved", "level": "info",
+                "message": f"目标日 {target_date} 在本批次无观测，可查看预测，暂无法进行当日实测对比。"}
 
     @staticmethod
     def _warnings(raw: Any) -> list[dict]:
@@ -438,15 +440,8 @@ class FieldService:
         if not self.store.model_available(model_id):
             raise unavailable_error(self.store, model_id)
         adapter = self._adapter()
-        date_str, idx = self.resolve_date(adapter, date)
-        target_date = self._target_date(adapter, idx)
-        if target_date is None:
-            raise APIError(
-                422,
-                "date_invalid",
-                "该日期之后没有可用帧，无法生成预测场（通常是数据集最后一天）",
-                "请选择更早的日期",
-            )
+        date_str, _ = self.resolve_date(adapter, date)
+        target_date, target_idx = self.target_for(adapter, date_str)
 
         try:
             if model_id == "simvp":
@@ -482,23 +477,21 @@ class FieldService:
         target_date = str(raw.get("target_date") or target_date)
 
         comparison = None
-        try:
-            trap = self._frame(adapter, adapter.next_idx(idx))
-            truth_mask = np.asarray(trap["mask"], dtype=bool)
-            valid = mask & truth_mask & np.isfinite(trap["u"]) & np.isfinite(trap["v"])
-            if bool(valid.any()):
-                du = u[valid].astype(np.float64) - np.asarray(trap["u"], dtype=np.float32)[valid]
-                dv = v[valid].astype(np.float64) - np.asarray(trap["v"], dtype=np.float32)[valid]
-                vec_rmse = float(np.sqrt(np.mean(du * du + dv * dv)))
-                comparison = {"n": int(valid.sum()), "vec_rmse": round(vec_rmse, 2)}
-            else:
-                comparison = {"n": 0, "vec_rmse": None}
-        except APIError:
-            comparison = None
+        if target_idx is not None:
+            truth = self._frame(adapter, target_idx)
+            truth_mask = np.asarray(truth["mask"], dtype=bool)
+            valid = mask & truth_mask & np.isfinite(truth["u"]) & np.isfinite(truth["v"])
+            comparison = {"n": int(valid.sum()), "vec_rmse": None}
+            if valid.any():
+                du = u[valid].astype(np.float64) - truth["u"][valid]
+                dv = v[valid].astype(np.float64) - truth["v"][valid]
+                comparison["vec_rmse"] = round(float(np.sqrt(np.mean(du * du + dv * dv))), 2)
 
         lat, lon = self._grids(adapter)
         row_lat, col_lon = axes_row_lat_col_lon(lat, lon)
         warnings = self._warnings(raw.get("warnings"))
+        if target_idx is None:
+            warnings.insert(0, self.missing_truth_warning(target_date))
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 1)
         return {
             "kind": "predicted",
@@ -521,7 +514,7 @@ class FieldService:
 __all__ = [
     "FieldService",
     "exception_to_api_error",
-    "bilinear",
+    "initial_bearing",
     "direction_deg",
     "serialize_speed_grid",
     "sample_vectors",

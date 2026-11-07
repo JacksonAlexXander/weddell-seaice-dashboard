@@ -241,7 +241,7 @@ const option = computed(() => {
             'u / v',
             `${Number(u).toFixed(2)} / ${Number(v).toFixed(2)} cm/s`
           )}${tipRow('速度', `${Number(speed).toFixed(2)} cm/s`)}${tipRow(
-            '方位角',
+            '网格方位角',
             `${bearing.toFixed(0)}°`
           )}`
         }

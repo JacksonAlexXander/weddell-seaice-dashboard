@@ -24,6 +24,7 @@ import numpy as np
 
 from .baselines import ClimatologyPredictor, PersistencePredictor
 from .common import (
+    next_calendar_day,
     ARTIFACT_DIR,
     EXTREME_SPEED_ABS,
     GRID_H,
@@ -391,13 +392,6 @@ class PredictionEngine:
                 hint=f"最早可用起报日 {self.store.date_of(N_HISTORY - 1)}")
         return idx
 
-    def _next_idx(self, last_idx: int) -> int:
-        try:
-            return self.store.next_idx(last_idx)
-        except ValueError as e:
-            raise DateError(f"该日期没有下一帧，无法做 24h 预测（{self.store.date_of(last_idx)}）",
-                            hint="请选取数据集最新日之前的日期") from e
-
     # ------------------------------------------------------------ 特征 / 预测
     def _features(self, last_idx: int, rows, cols) -> np.ndarray:
         win = self.store.window(int(last_idx), N_HISTORY)
@@ -420,8 +414,8 @@ class PredictionEngine:
                              np.asarray(f["v"][rows, cols], np.float64)], axis=1)
         if model_id == "climatology":
             clim = self._ensure_clim()
-            target_idx = self._next_idx(int(last_idx))
-            k = clim._month_index(self.store, target_idx)
+            target_day = next_calendar_day(self.store.dates[last_idx])
+            k = int(target_day.astype("datetime64[M]").astype(int) % 12)
             return np.stack([np.asarray(clim.u[k][rows, cols], np.float64),
                              np.asarray(clim.v[k][rows, cols], np.float64)], axis=1)
         raise UnknownModelError(f"未知模型: {model_id!r}")
@@ -468,19 +462,10 @@ class PredictionEngine:
         return None   # 基线不给不确定度（前端按 null 处理）
 
     # ------------------------------------------------------------ 预警
-    def _warnings(self, model_id: str, last_idx: int, next_idx: int, row: int, col: int,
+    def _warnings(self, model_id: str, last_idx: int, row: int, col: int,
                   pred_u: float, pred_v: float, *, cur_valid: bool, coverage: float,
                   include_quality: bool = True) -> list[dict]:
         out: list[dict] = []
-        gap = int((self.store.dates[next_idx] - self.store.dates[last_idx])
-                  / np.timedelta64(1, "D"))
-        if gap > 1:
-            out.append({
-                "code": "temporal_gap", "level": "warning",
-                "message": (f"最后观测日 {self.store.date_of(last_idx)} 与目标帧 "
-                            f"{self.store.date_of(next_idx)} 间隔 {gap} 天（数据集缺失日），"
-                            f"预测实为 {gap} 天外推"),
-            })
         if not cur_valid:
             msg = ("当前像元在最后观测日无效：特征使用历史回填/邻域值，预测可信度下降"
                    if model_id in ML_MODEL_IDS else
@@ -522,7 +507,7 @@ class PredictionEngine:
 
     # ------------------------------------------------------------ 单点预测
     def predict_point(self, model_id: str, date: str, row: int, col: int) -> dict:
-        """预测 (date, row, col) 的下一有效帧 (u,v)。
+        """预测 (date, row, col) 的下一自然日 (u,v)。
 
         返回兼容设计文档 §5.1 的字段：ok/next_date/next_idx/u/v/speed/direction_deg/
         input/uncertainty/warnings，并额外提供 displacement_km_24h / delta_speed_vs_persistence。
@@ -530,7 +515,8 @@ class PredictionEngine:
         model_id = self._validate_model(model_id)
         row, col = self._validate_cell(row, col)
         last_idx = self._resolve_last_idx(date)
-        next_idx = self._next_idx(last_idx)
+        target_date = str(next_calendar_day(self.store.dates[last_idx]))
+        next_idx = self.store.idx_of_date(target_date)
         if model_id in ML_MODEL_IDS:
             self._ensure_loaded(model_id)
 
@@ -549,15 +535,15 @@ class PredictionEngine:
         lat, lon = self.store.cell_latlon(row, col)
         pers = self._predict_rows("persistence", last_idx, [row], [col], None)[0]
         pers_speed = _vec_speed(float(pers[0]), float(pers[1]))
-        warnings = self._warnings(model_id, last_idx, next_idx, row, col, pred_u, pred_v,
+        warnings = self._warnings(model_id, last_idx, row, col, pred_u, pred_v,
                                   cur_valid=cur_valid, coverage=coverage)
 
         return {
             "ok": True,
             "model_id": model_id,
             "date": self.store.date_of(last_idx),
-            "next_date": self.store.date_of(next_idx),
-            "next_idx": int(next_idx),
+            "next_date": target_date,
+            "next_idx": next_idx,
             "last_obs_idx": int(last_idx),
             "u": float(pred_u),
             "v": float(pred_v),
@@ -581,7 +567,8 @@ class PredictionEngine:
         """预测 (date) 的下一帧整场。返回 (H,W) 数组（无效像元 NaN）+ coverage + warnings。"""
         model_id = self._validate_model(model_id)
         last_idx = self._resolve_last_idx(date)
-        next_idx = self._next_idx(last_idx)
+        target_date = str(next_calendar_day(self.store.dates[last_idx]))
+        next_idx = self.store.idx_of_date(target_date)
         if model_id in ML_MODEL_IDS:
             self._ensure_loaded(model_id)
         rows, cols = self.store.valid_cells(int(last_idx))
@@ -594,12 +581,7 @@ class PredictionEngine:
             v[rows, cols] = pred[:, 1]
         speed = np.hypot(u, v).astype(np.float32)
         coverage = float(rows.size) / float(GRID_H * GRID_W)
-        gap = int((self.store.dates[next_idx] - self.store.dates[last_idx])
-                  / np.timedelta64(1, "D"))
         warnings: list[dict] = []
-        if gap > 1:
-            warnings.append({"code": "temporal_gap", "level": "warning",
-                             "message": f"目标帧与最后观测日间隔 {gap} 天（数据集缺失日）"})
         if coverage < LOW_COVERAGE_THRESHOLD:
             warnings.append({"code": "low_coverage", "level": "warning",
                              "message": f"当日有效覆盖仅 {coverage:.1%}，预测场稀疏"})
@@ -607,8 +589,8 @@ class PredictionEngine:
             "ok": True,
             "model_id": model_id,
             "date": self.store.date_of(last_idx),
-            "target_date": self.store.date_of(next_idx),
-            "target_idx": int(next_idx),
+            "target_date": target_date,
+            "target_idx": next_idx,
             "u": u,
             "v": v,
             "speed": speed,
@@ -653,12 +635,15 @@ class PredictionEngine:
         if target_hi < target_lo:
             raise DateError("回测区间无有效目标日",
                             hint=f"可用目标日 {self.store.date_of(avail_lo)} ~ {self.store.date_of(avail_hi)}")
-        n_days_total = target_hi - target_lo + 1
-        stride = int(np.ceil(n_days_total / max_points))
-        targets = np.arange(target_lo, target_hi + 1, stride, dtype=np.int64)[:max_points]
-
-        rows = np.full(targets.size, row, np.int64)
-        cols = np.full(targets.size, col, np.int64)
+        targets = np.arange(target_lo, target_hi + 1, dtype=np.int64)
+        one_day = self.store.dates[targets] - self.store.dates[targets - 1] == np.timedelta64(1, "D")
+        targets = targets[one_day]
+        n_days_total = len(targets)
+        if not n_days_total:
+            raise DateError("回测区间没有相邻观测日")
+        if n_days_total > max_points:
+            picks = np.linspace(0, n_days_total - 1, max_points).round().astype(int)
+            targets = targets[picks]
         # 批量构造特征（每个目标日 j 从 j-1 帧出发）
         X = None
         if model_id in ML_MODEL_IDS:

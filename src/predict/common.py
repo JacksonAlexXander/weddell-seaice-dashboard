@@ -39,6 +39,10 @@ PERSISTENCE_DELTA_WARN = 10.0       # 预测与持续性差异 > 10 cm/s -> pers
 EXTREME_SPEED_ABS = 60.0            # 预测速度绝对上限（cm/s）-> danger
 
 
+def next_calendar_day(date) -> np.datetime64:
+    return np.datetime64(date, "D") + np.timedelta64(1, "D")
+
+
 def resolve_path(path: str | os.PathLike | None, *, default: str | None = None) -> Path:
     """把相对路径解析到工作区根；绝对路径原样返回。"""
     if path is None:

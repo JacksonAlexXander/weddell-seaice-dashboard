@@ -23,6 +23,6 @@ const genText = computed(() => fmtClock(props.generatedAt))
     <span class="foot-sep"></span>
     <span class="foot-item fixed">数据批次：{{ dataTime?.latest_date || '—' }} · 构建 {{ (dataTime?.built_at || '').slice(0, 10) || '—' }}</span>
     <span class="foot-sep"></span>
-    <span class="foot-item fixed">生成时间 {{ genText }} · v1.0.0</span>
+    <span class="foot-item fixed">生成时间 {{ genText }} · v1.1.0</span>
   </footer>
 </template>

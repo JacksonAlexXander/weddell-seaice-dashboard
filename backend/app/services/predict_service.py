@@ -30,6 +30,7 @@ from .field_service import (
     FieldService,
     direction_deg,
     exception_to_api_error,
+    initial_bearing,
     map_engine_error,
     series_24h,
     unavailable_error,
@@ -133,7 +134,7 @@ class PredictService:
     def _data(self):
         return self.fields._adapter()
 
-    def _data_time_block(self, adapter, idx: int, date_str: str, next_frame_date: str) -> dict:
+    def _data_time_block(self, adapter, idx: int, date_str: str, next_frame_date: str, target_observed: bool) -> dict:
         dt = self.store.data_time() or {}
         latest = dt.get("latest_date") or adapter.date_str(adapter.n_frames - 1)
         n_frames = dt.get("n_frames") or int(adapter.n_frames)
@@ -141,6 +142,7 @@ class PredictService:
             "last_obs_date": date_str,
             "last_obs_index": int(idx),
             "next_frame_date": next_frame_date,
+            "target_observed": target_observed,
             "horizon_hours": HORIZON_HOURS,
             "latest_date": str(latest),
             "n_frames": int(n_frames),
@@ -217,16 +219,7 @@ class PredictService:
 
         adapter = self._data()
         date_str, idx = self.fields.resolve_date(adapter, req.date)
-        try:
-            next_idx = adapter.next_idx(idx)
-        except ValueError:
-            raise APIError(
-                422,
-                "date_invalid",
-                "该日期之后没有可用帧，无法做 24h 预测（通常是数据集最后一天）",
-                "请选择更早的起报日期（默认推荐 2025-06-26）",
-            ) from None
-        next_frame_date = adapter.date_str(next_idx)
+        next_frame_date, next_idx = self.fields.target_for(adapter, date_str)
         row, col = int(req.cell.row), int(req.cell.col)
 
         # SimVP 需要 10 帧历史输入（含当日）
@@ -270,7 +263,7 @@ class PredictService:
         adapter,
         date_str: str,
         idx: int,
-        next_idx: int,
+        next_idx: int | None,
         next_frame_date: str,
         row: int,
         col: int,
@@ -350,6 +343,8 @@ class PredictService:
             if not built_series["uncertainty"] and isinstance(raw_series.get("uncertainty"), dict):
                 built_series["uncertainty"] = raw_series["uncertainty"]
 
+        lats, lons = built_series["lat"], built_series["lon"]
+        bearing = initial_bearing(lats[0], lons[0], lats[-1], lons[-1])
         # --- warnings：引擎 warnings + 高速度 / 无观测 / 时间缺口 ---
         warnings = self._normalize_warnings(raw.get("warnings"))
         have = {w["code"] for w in warnings}
@@ -362,18 +357,8 @@ class PredictService:
                     "message": "起报日该像元无有效观测（u/v=0），预测主要依赖邻域/季节特征",
                 },
             )
-        try:
-            gap = int((adapter.dates[next_idx] - adapter.dates[idx]).astype(int))
-        except Exception:  # noqa: BLE001
-            gap = 1
-        if gap > 1 and not ({"frame_gap", "temporal_gap"} & have):
-            warnings.append(
-                {
-                    "code": "frame_gap",
-                    "level": "info",
-                    "message": f"下一有效帧距起报日 {gap} 天（数据缺失日），24h 曲线为近似",
-                }
-            )
+        if next_idx is None:
+            warnings.insert(0, self.fields.missing_truth_warning(next_frame_date))
         if "high_speed" not in have:
             stats = self.store.cell_stats(row, col)
             if stats:
@@ -390,7 +375,7 @@ class PredictService:
                         }
                     )
 
-        data_time_block = self._data_time_block(adapter, idx, date_str, next_frame_date)
+        data_time_block = self._data_time_block(adapter, idx, date_str, next_frame_date, next_idx is not None)
         return {
             "status": "ok",
             "status_text": "预测成功",
@@ -418,7 +403,7 @@ class PredictService:
                 "direction_deg": round(pred_direction, 2),
                 "unit": "cm/s",
                 "displacement_km_24h": displacement_km,
-                "bearing_deg": round(pred_direction, 2),
+                "bearing_deg": round(bearing, 2) % 360.0,
                 "delta_speed_vs_persistence": delta_speed,
             },
             "series_24h": built_series,
@@ -559,7 +544,7 @@ class PredictService:
 
         summary_raw = raw.get("summary") if isinstance(raw.get("summary"), dict) else {}
         summary = {
-            "n": int(summary_raw.get("n") or len(series)),
+            "n": int(summary_raw.get("n", len(series))),
             "rmse_u": _round(summary_raw.get("rmse_u"), 4),
             "rmse_v": _round(summary_raw.get("rmse_v"), 4),
             "vec_rmse": _round(summary_raw.get("vec_rmse"), 4),

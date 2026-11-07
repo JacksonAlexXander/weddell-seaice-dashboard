@@ -71,8 +71,8 @@ def main():
     r = c.get("/api/metrics")
     check("GET /api/metrics 200", r.status_code == 200)
     mm = r.json()
-    check("metrics.protocol.n_samples=1556493",
-          int((mm.get("protocol") or {}).get("n_samples") or 0) == 1556493,
+    check("metrics.protocol.n_samples=1509249",
+          int((mm.get("protocol") or {}).get("n_samples") or 0) == 1509249,
           str((mm.get("protocol") or {}).get("n_samples")))
     rows = {x["id"]: x for x in mm.get("models", [])}
     for need in ("ridge", "random_forest"):
