@@ -2,11 +2,19 @@
 
 基于 NSIDC-0116 v4 海冰漂移数据的交互式预测大屏。下载完整运行包后，可在自己的电脑上进行预测与历史回测，无需云服务器或 API 密钥。
 
-**[下载 v1.2.0 完整安装包](https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/download/v1.2.0/weddell-seaice-dashboard-v1.2.0-full.zip)** · [版本说明和校验文件](https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/latest)
+## 下载前请阅读
+
+© 2026 JacksonAlexXander。完整包可公开下载，用于个人学习、非商业教学和非商业科研。引用时请注明作者、项目链接、版本和数据来源。商用、转载、镜像、再分发及对外部署须事先取得作者书面许可。分享请发送官方链接。
+
+[使用许可与知识产权声明](LICENSE.md) · [下载与使用隐私说明](PRIVACY.md)
+
+**[查看最新完整安装包与校验文件](https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/latest)**
 
 完整 ZIP 包含历史数据、已训练权重、近期观测缓存、启动脚本和已构建的大屏。请在 Releases 中选择带
 `-full.zip` 的文件。GitHub 自动生成的 `Source code (zip)` 仅供查看源码。
 模型选择、训练过程、独立测试结果和论文见[训练与回测记录](docs/训练与回测.md)。
+
+作者可从本机开放临时浏览器演示，也可将完整包部署到支持 Python 的长期托管服务。见[浏览器演示与部署](docs/浏览器演示与部署.md)。
 
 ## 快速开始
 
