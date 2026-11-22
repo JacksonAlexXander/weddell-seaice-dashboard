@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import AppFooter from './components/AppFooter.vue'
 import KpiPanel from './components/KpiPanel.vue'
@@ -13,6 +13,7 @@ import PredictionCard from './components/PredictionCard.vue'
 import MetricsComparePanel from './components/MetricsComparePanel.vue'
 import BacktestPanel from './components/BacktestPanel.vue'
 import StatusPanel from './components/StatusPanel.vue'
+import { api, describeError, pagesMode } from './api/client.js'
 import { useDashboard } from './state/useDashboard.js'
 
 const {
@@ -34,9 +35,27 @@ const {
 } = useDashboard()
 
 const generatedAt = new Date()
+const publicBacktest = shallowRef(null)
+const publicBacktestModel = ref('ridge')
+const publicBacktestLoading = ref(false)
+const publicBacktestError = ref('')
+const publicBacktestCell = { row: 65, col: 60 }
+
+async function loadPublicBacktest() {
+  publicBacktestLoading.value = true
+  publicBacktestError.value = ''
+  try {
+    publicBacktest.value = await api.backtest({ model: publicBacktestModel.value })
+  } catch (error) {
+    publicBacktestError.value = describeError(error)
+  } finally {
+    publicBacktestLoading.value = false
+  }
+}
 
 onMounted(() => {
   actions.bootstrap()
+  if (pagesMode) loadPublicBacktest()
 })
 onBeforeUnmount(() => {
   actions.dispose()
@@ -76,6 +95,12 @@ const retryBacktest = () => actions.loadBacktest()
       <span class="ga-badge">{{ banner.level === 'info' ? 'DEV' : '连接异常' }}</span>
       <span class="ga-text" :title="banner.text">{{ banner.text }}</span>
       <button class="mini-btn" @click="actions.retryConnection">重新连接</button>
+    </div>
+
+    <div v-if="pagesMode" class="global-alert info">
+      <span class="ga-text">公开预报 · 基于 OSI SAF 观测和已训练模型发布。页面显示观测结束时间及预报有效期。</span>
+      <a class="mini-btn" href="https://github.com/JacksonAlexXander/weddell-seaice-dashboard/releases/latest"
+        target="_blank" rel="noopener noreferrer">下载完整版与历史回测</a>
     </div>
 
     <main class="screen-grid">
@@ -169,7 +194,23 @@ const retryBacktest = () => actions.loadBacktest()
           :error="state.metricsError || ''"
           @retry="retryMetrics"
         />
-        <BacktestPanel v-if="state.mode === 'archive'"
+        <BacktestPanel v-if="pagesMode"
+          snapshot
+          :backtest="publicBacktest"
+          :loading="publicBacktestLoading"
+          :error="publicBacktestError"
+          :cell="publicBacktestCell"
+          @retry="loadPublicBacktest"
+        >
+          <template #snapshot-controls>
+            <select v-model="publicBacktestModel" class="ctl-select" aria-label="回测模型"
+              :disabled="publicBacktestLoading" @change="loadPublicBacktest">
+              <option value="ridge">Ridge</option>
+              <option value="random_forest">Random Forest</option>
+            </select>
+          </template>
+        </BacktestPanel>
+        <BacktestPanel v-else-if="state.mode === 'archive'"
           :backtest="state.backtest"
           :loading="state.backtestLoading"
           :error="state.backtestError || ''"
@@ -192,6 +233,6 @@ const retryBacktest = () => actions.loadBacktest()
       </div>
     </main>
 
-    <AppFooter :data-time="activeDataTime" :recent="state.mode === 'recent'" :generated-at="generatedAt" />
+    <AppFooter :data-time="activeDataTime" :recent="state.mode === 'recent'" :generated-at="pagesMode && state.recentBatch?.published_at ? new Date(state.recentBatch.published_at) : generatedAt" />
   </div>
 </template>

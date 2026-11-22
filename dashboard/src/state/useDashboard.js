@@ -1,5 +1,5 @@
 import { computed, reactive } from 'vue'
-import { api, describeError, usingMock } from '../api/client.js'
+import { api, describeError, pagesMode, usingMock } from '../api/client.js'
 import { clamp, fmtClock, shiftDate } from '../utils/format.js'
 
 const FALLBACK = {
@@ -18,7 +18,7 @@ export function useDashboard() {
     booting: true,
     booted: false,
     selectionTouched: false,
-    mode: 'archive',
+    mode: pagesMode ? 'recent' : 'archive',
     leadDays: 3,
     recentBatch: null,
     recentLoading: false,
@@ -89,7 +89,7 @@ export function useDashboard() {
     return state.mode === 'recent' ? models.filter(m => RECENT_MODELS.has(m.id)) : models
   })
   const activeDataTime = computed(() => state.mode === 'archive' ? dataTime.value : {
-    ...state.recentBatch, built_at: state.recentBatch?.downloaded_at,
+    ...state.recentBatch, built_at: state.recentBatch?.published_at || state.recentBatch?.downloaded_at,
   })
   const recentExpired = computed(() => Boolean(state.recentBatch?.available &&
     Date.parse(state.recentBatch.latest_at) + 3 * 86400000 <= state.clock.getTime()))
@@ -157,7 +157,7 @@ export function useDashboard() {
     if (state.health.checked && !state.health.ok) {
       return {
         level: 'danger',
-        text: `后端服务未连接：${state.health.error || '未知原因'}。请启动 FastAPI（.venv/bin/python scripts/serve_dashboard.py --port 8000）后点击「重新连接」。`,
+        text: pagesMode ? `公开预报批次加载失败（${state.health.error || '网络异常'}）。请重新加载。` : `后端服务未连接：${state.health.error || '未知原因'}。请启动 FastAPI（.venv/bin/python scripts/serve_dashboard.py --port 8000）后点击「重新连接」。`,
       }
     }
     if (state.modelsError && !state.models) {
@@ -169,7 +169,7 @@ export function useDashboard() {
   const predictStatusText = computed(() => {
     switch (state.predictStatus) {
       case 'running':
-        return '推理中…'
+        return pagesMode ? '读取预报中…' : '推理中…'
       case 'success':
         return `成功 · ${state.predictElapsedMs ?? '—'} ms · ${state.predictAt ? fmtClock(state.predictAt).slice(11) : ''}`
       case 'error':
@@ -523,19 +523,21 @@ export function useDashboard() {
     startTimers()
     state.booting = true
     await Promise.allSettled([loadHealth(), loadModels(), loadOverview(), loadMetrics(), loadRecent()])
-    if (state.recentBatch?.available && new URLSearchParams(window.location.search).get('mode') !== 'archive') {
+    if (pagesMode) applyRecentBatch()
+    else if (state.recentBatch?.available && new URLSearchParams(window.location.search).get('mode') !== 'archive') {
       setMode('recent', false)
     }
     await loadField()
     state.booting = false
     state.booted = true
-    if (state.models && !(state.mode === 'recent' && recentExpired.value)) await runPredict()
+    if (state.models && (pagesMode ? state.recentBatch?.available : !(state.mode === 'recent' && recentExpired.value))) await runPredict()
   }
 
   async function retryConnection() {
     await loadHealth()
     if (!state.health.ok) return
-    await Promise.allSettled([loadModels(), loadOverview(), loadMetrics()])
+    await Promise.allSettled([loadModels(), loadOverview(), loadMetrics(), ...(pagesMode ? [loadRecent()] : [])])
+    if (pagesMode) applyRecentBatch()
     await loadField()
     if (state.models && (!state.prediction || state.predictStatus === 'error')) await runPredict()
   }

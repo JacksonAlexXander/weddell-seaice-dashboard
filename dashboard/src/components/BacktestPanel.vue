@@ -9,6 +9,7 @@ const props = defineProps({
   backtest: { type: Object, default: null },
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' },
+  snapshot: { type: Boolean, default: false },
   range: { type: Number, default: 180 },
   model: { type: Object, default: null },
   cell: { type: Object, required: true },
@@ -95,6 +96,7 @@ const hasData = computed(() => series.value.length > 0)
 
 const subtitle = computed(() => {
   const m = props.model?.short || props.model?.name || '—'
+  if (props.snapshot) return `NSIDC-0116 · 像元 (${props.cell.row}, ${props.cell.col}) · 2025 上半年`
   return `${m} · 像元 (${props.cell.row}, ${props.cell.col}) · 近 ${props.range} 天`
 })
 
@@ -114,11 +116,12 @@ const rangeText = computed(() => {
     :loading="loading"
     :error="error"
     :empty="!loading && !error && !hasData"
-    empty-text="运行预测后自动生成回测对比（POST /api/backtest）；也可点击右上角刷新"
+    :empty-text="snapshot ? '此回测样本暂无发布数据' : '运行预测后自动生成回测对比（POST /api/backtest）；也可点击右上角刷新'"
     @retry="$emit('retry')"
   >
     <template #extra>
-      <div class="seg">
+      <slot v-if="snapshot" name="snapshot-controls" />
+      <div v-else class="seg">
         <button
           v-for="opt in rangeOptions"
           :key="opt"
@@ -129,7 +132,7 @@ const rangeText = computed(() => {
           {{ opt }}d
         </button>
       </div>
-      <button class="mini-btn" title="刷新回测" :disabled="loading" @click="emit('refresh')">↻</button>
+      <button v-if="!snapshot" class="mini-btn" title="刷新回测" :disabled="loading" @click="emit('refresh')">↻</button>
     </template>
 
     <div class="bt-chart">

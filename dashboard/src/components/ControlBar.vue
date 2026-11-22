@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { pagesMode } from '../api/client.js'
 import { fmtTimeOnly, fmtUtc, truncate } from '../utils/format.js'
 
 const props = defineProps({
@@ -30,7 +31,7 @@ const modelDisabled = computed(
 const statusLabel = computed(() => {
   switch (props.predictStatus) {
     case 'running':
-      return '推理中'
+      return pagesMode ? '读取中' : '推理中'
     case 'success':
       return '预测成功'
     case 'error':
@@ -47,8 +48,8 @@ const statusDetail = computed(() => {
     return `耗时 ${ms}${at ? ' · ' + at : ''}`
   }
   if (props.predictStatus === 'error') return truncate(props.predictError, 58)
-  if (props.predictStatus === 'running') return '调用已训练模型推理中，请稍候…'
-  return '选择模型 / 日期 / 像元后点击运行'
+  if (props.predictStatus === 'running') return pagesMode ? '正在读取模型预报…' : '调用已训练模型推理中，请稍候…'
+  return pagesMode ? '选择模型、预报时效和像元' : '选择模型 / 日期 / 像元后点击运行'
 })
 
 const dateMin = computed(() => props.dataTime?.first_date || '1978-10-25')
@@ -73,7 +74,7 @@ function onCol(e) {
 
 <template>
   <div class="control-bar">
-    <div class="ctl-group">
+    <div v-if="!pagesMode" class="ctl-group">
       <button class="mini-btn" :class="{ active: mode === 'recent' }"
         :disabled="predictStatus === 'running'" @click="emit('mode-change', 'recent')">近期预报</button>
       <button class="mini-btn" :class="{ active: mode === 'archive' }"
@@ -85,7 +86,7 @@ function onCol(e) {
         class="ctl-select"
         :value="selection.model"
         :disabled="modelDisabled"
-        :title="modelsError || '选择预测模型（来自 /api/models）'"
+        :title="modelsError || '选择预测模型'"
         @change="onModel"
       >
         <option
@@ -123,14 +124,14 @@ function onCol(e) {
     <div v-else class="ctl-group">
       <span class="ctl-label">{{ fmtUtc(recentBatch?.latest_at) }}</span>
       <button type="button" class="mini-btn" :disabled="recentLoading || predictStatus === 'running'"
-        @click="emit('refresh-recent')">{{ recentLoading ? '更新中…' : '更新近期观测' }}</button>
+        @click="emit('refresh-recent')">{{ recentLoading ? '更新中…' : pagesMode ? '检查新批次' : '更新近期观测' }}</button>
       <select aria-label="预报时效" class="ctl-input" :value="leadDays" :disabled="predictStatus === 'running'"
         @change="emit('lead-change', Number($event.target.value))">
         <option v-for="day in [1, 2, 3]" :key="day" :value="day">+{{ day * 24 }} 小时</option>
       </select>
     </div>
     <div v-if="mode === 'recent' && (recentError || recentExpired)" class="ctl-group" role="status">
-      <span class="chip error">{{ recentError || '缓存时效已结束，请更新近期观测' }}</span>
+      <span class="chip error">{{ recentError || (pagesMode ? '当前发布批次已过期，可查看存档轨迹' : '缓存时效已结束，请更新近期观测') }}</span>
     </div>
 
     <div class="ctl-group">
@@ -168,12 +169,12 @@ function onCol(e) {
     <button
       class="run-btn"
       :disabled="predictStatus === 'running' || !hasAvail || (mode === 'recent' && (!recentBatch?.available || recentLoading))"
-      :title="hasAvail ? 'POST /api/predict（真实推理，不训练）' : '模型列表中无可用模型'"
+      :title="hasAvail ? (pagesMode ? '查看已发布的模型预报' : 'POST /api/predict（真实推理，不训练）') : '模型列表中无可用模型'"
       @click="$emit('run')"
     >
       <span v-if="predictStatus === 'running'" class="spinner sm"></span>
       <span v-else>▶</span>
-      {{ predictStatus === 'running' ? '预测中…' : '一键运行预测' }}
+      {{ predictStatus === 'running' ? '读取中…' : pagesMode ? '查看预测' : '一键运行预测' }}
     </button>
 
     <div class="predict-status-line">

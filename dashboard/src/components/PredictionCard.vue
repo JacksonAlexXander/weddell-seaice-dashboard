@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { pagesMode } from '../api/client.js'
 import PanelShell from './PanelShell.vue'
 import { bearingLabel, fmt } from '../utils/format.js'
 
@@ -108,7 +109,7 @@ function fmtNum(v, d = 2) {
           </span>
         </div>
         <div class="pred-meta">
-          <span class="pred-meta-label">推理耗时（服务端）</span>
+          <span class="pred-meta-label">{{ pagesMode ? '轨迹计算耗时' : '推理耗时（服务端）' }}</span>
           <span class="pred-meta-value">{{ elapsedMs ?? prediction?.elapsed_ms ?? '—' }} <small>ms</small></span>
         </div>
         <div class="pred-meta">
@@ -123,13 +124,13 @@ function fmtNum(v, d = 2) {
           · <b>{{ fmtNum(prediction.input?.lat, 2) }}°, {{ fmtNum(prediction.input?.lon, 2) }}°</b>
           · 观测 <b>{{ fmtNum(prediction.input?.speed) }} cm/s</b>
         </span>
-        <span class="mono dim" style="margin-left: auto">req {{ prediction.request_id || '—' }}</span>
+        <span v-if="!pagesMode" class="mono dim" style="margin-left: auto">req {{ prediction.request_id || '—' }}</span>
       </div>
     </template>
 
     <div v-else class="pred-placeholder">
       <span class="big-icon">◈</span>
-      <span>尚未运行预测：选择模型 / 日期 / 像元后点击「一键运行预测」</span>
+      <span>{{ pagesMode ? '选择模型和像元后点击「查看预测」' : '尚未运行预测：选择模型 / 日期 / 像元后点击「一键运行预测」' }}</span>
       <button v-if="status === 'error'" class="mini-btn" @click="$emit('run')">重新运行</button>
     </div>
   </PanelShell>

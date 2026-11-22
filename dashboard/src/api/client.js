@@ -7,7 +7,8 @@ const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
 const search = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams()
 const MOCK_FLAG = DEV && (search.get('mock') === '1' || (import.meta.env.VITE_USE_MOCK === '1' && search.get('mock') !== '0'))
 
-export const usingMock = Boolean(MOCK_FLAG)
+export const pagesMode = import.meta.env.VITE_GITHUB_PAGES === '1'
+export const usingMock = Boolean(MOCK_FLAG) && !pagesMode
 
 export class ApiError extends Error {
   constructor(message, { code = 'request_failed', status = 0, hint = '', path = '' } = {}) {
@@ -109,6 +110,10 @@ if (import.meta.env.DEV) {
 }
 
 async function request(method, path, body, opts = {}) {
+  if (pagesMode) {
+    const { handlePages } = await import('./pages.js')
+    return handlePages(path, body)
+  }
   if (usingMock && mockLoader) {
     const mod = await mockLoader()
     return mod.handleMock(method, path, body)

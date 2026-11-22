@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { pagesMode } from '../api/client.js'
 import PanelShell from './PanelShell.vue'
 import { fmtInt, fmtTimeOnly, fmtUtc } from '../utils/format.js'
 
@@ -64,7 +65,7 @@ const dtRows = computed(() => {
       </div>
       <div v-if="!showWarnings.length" class="warn-empty">
         <span class="dot ok"></span>
-        无异常提示 · 数据与推理链路正常
+        {{ pagesMode ? '无异常提示' : '无异常提示 · 数据与推理链路正常' }}
       </div>
     </div>
 
@@ -82,7 +83,7 @@ const dtRows = computed(() => {
       </div>
       <div class="dt-updated">
         <span>预测更新 {{ predictAt ? fmtTimeOnly(predictAt) : '—' }}</span>
-        <span>回测更新 {{ backtestAt ? fmtTimeOnly(backtestAt) : '—' }}</span>
+        <span v-if="!pagesMode">回测更新 {{ backtestAt ? fmtTimeOnly(backtestAt) : '—' }}</span>
       </div>
     </div>
   </PanelShell>

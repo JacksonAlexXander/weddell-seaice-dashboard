@@ -2,6 +2,14 @@
 
 基于 NSIDC-0116 v4 海冰漂移数据的交互式预测大屏。下载完整运行包后，可在自己的电脑上进行预测与历史回测，无需云服务器或 API 密钥。
 
+## 在线预报大屏
+
+[直接打开 GitHub Pages](https://jacksonalexxander.github.io/weddell-seaice-dashboard/)
+
+在线版显示已训练的 SimVP、Ridge 和 Random Forest 生成的 24、48、72 小时漂移场和轨迹，可下载像元预报 JSON。起报时间以 OSI SAF 观测结束时刻为准。历史回测面板提供 2025 年上半年固定像元的观测与预测对比。自选归档日期与像元的回测、FastAPI 推理接口可通过完整运行包使用。
+
+GitHub Pages 构建设置 `VITE_GITHUB_PAGES=1`，使用 `scripts/export_pages.py` 生成预报数据。带 `--refresh` 时从 OSI SAF 读取近期观测，带 `--snapshot` 时读取经验证的本地观测批次。
+
 ## 下载前请阅读
 
 © 2026 JacksonAlexXander。完整包可公开下载，用于个人学习、非商业教学和非商业科研。引用时请注明作者、项目链接、版本和数据来源。商用、转载、镜像、再分发及对外部署须事先取得作者书面许可。分享请发送官方链接。

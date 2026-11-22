@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { pagesMode } from '../api/client.js'
 import { fmtClock, fmtUtc } from '../utils/format.js'
 
 const props = defineProps({
@@ -16,13 +17,13 @@ const builtAt = computed(() => fmtUtc(props.dataTime?.built_at))
 
 const connText = computed(() => {
   if (!props.health.checked) return '检测中…'
-  return props.health.ok ? 'API 正常' : '未连接'
+  return props.health.ok ? (pagesMode ? '批次已载入' : 'API 正常') : '未连接'
 })
 
 const statusText = computed(() => {
   switch (props.predictStatus) {
     case 'running':
-      return '推理中'
+      return pagesMode ? '读取中' : '推理中'
     case 'success':
       return '预测成功'
     case 'error':
@@ -78,7 +79,7 @@ const statusText = computed(() => {
         <span class="hstat-value clock-value mono">{{ clockText }}</span>
       </div>
       <div class="hstat">
-        <span class="hstat-label">后端连接</span>
+        <span class="hstat-label">{{ pagesMode ? '公开预报' : '后端连接' }}</span>
         <span class="conn">
           <i class="dot" :class="health.ok ? 'ok' : health.checked ? 'bad' : 'idle'"></i>
           <span :style="{ color: health.ok ? '#6ee7b7' : health.checked ? '#fca5a5' : '#94a3b8' }">
