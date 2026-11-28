@@ -29,8 +29,8 @@ function cached(file) {
   return cache.get(file)
 }
 
-async function published() {
-  const recent = await cached('recent.json')
+async function published(recent) {
+  recent ??= await cached('recent.json')
   if (!recent.available || !/^fields-\d{4}-\d{2}-\d{2}\.json$/.test(recent.fields_file)) {
     throw new ApiError('当前没有已发布的预报批次')
   }
@@ -211,8 +211,16 @@ export async function handlePages(path, body) {
     return { status: 'ok' }
   }
   if (route === '/api/recent/refresh') {
-    cache.clear()
-    return cached('recent.json')
+    const latest = await json('recent.json')
+    const previous = await cache.get('recent.json')
+    // Verify the new data asset before switching during a Pages deployment.
+    if (previous && Date.parse(latest.latest_at) < Date.parse(previous.latest_at)) return previous
+    await published(latest)
+    if (previous?.fields_file !== latest.fields_file && previous?.fields_file) {
+      cache.delete(previous.fields_file + '?batch=' + encodeURIComponent(previous.published_at))
+    }
+    cache.set('recent.json', Promise.resolve(latest))
+    return latest
   }
   if (['/api/recent', '/api/models', '/api/metrics', '/api/overview'].includes(route)) {
     return cached(route.slice(5) + '.json')

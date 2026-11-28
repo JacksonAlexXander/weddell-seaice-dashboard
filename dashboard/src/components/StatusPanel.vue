@@ -6,6 +6,10 @@ import { fmtInt, fmtTimeOnly, fmtUtc } from '../utils/format.js'
 
 const props = defineProps({
   recent: { type: Boolean, default: false },
+  batchExpired: { type: Boolean, default: false },
+  validUntil: { type: Number, default: null },
+  horizonExpired: { type: Boolean, default: false },
+  leadDays: { type: Number, default: 1 },
   warnings: { type: Array, default: () => [] },
   dataTime: { type: Object, default: null },
   prediction: { type: Object, default: null },
@@ -16,7 +20,23 @@ const props = defineProps({
 
 const LEVEL_LABEL = { info: '提示', warning: '警告', danger: '危险' }
 
-const showWarnings = computed(() => (props.warnings || []).slice(0, 3))
+const CONTEXT_CODES = new Set(['recent_product_shift', 'multi_day_experimental', 'forecast_already_ended'])
+const showWarnings = computed(() => {
+  if (!props.recent) return props.warnings
+  const warnings = props.warnings.filter(item => !CONTEXT_CODES.has(item.code))
+  if (!props.horizonExpired) return warnings
+  const resolution = props.batchExpired
+    ? pagesMode ? '正在等待更新的发布批次。' : '请更新近期观测。'
+    : warnings.some(item => item.code === 'path_outside_support')
+      ? '可选择覆盖范围内的其他像元。'
+      : '可选择更长的预报时效。'
+  return [{ code: 'forecast_expired', level: 'warning',
+    message: `所选轨迹已于 ${fmtUtc(props.validUntil)} 结束。${resolution}` }, ...warnings]
+})
+const horizonText = computed(() => {
+  if (props.validUntil === null) return '—'
+  return props.horizonExpired ? '已结束 · 存档' : '有效'
+})
 
 const dtRows = computed(() => {
   const p = props.prediction?.data_time
@@ -24,9 +44,9 @@ const dtRows = computed(() => {
   if (props.recent) return [
     { label: '近期数据源', value: d?.source || 'OSI SAF' },
     { label: '观测结束', value: fmtUtc(p?.observation_end_at || d?.latest_at), cy: true },
-    { label: '预报有效至', value: fmtUtc(p?.forecast_valid_until), cy: true },
-    { label: '轨迹覆盖未来', value: p ? (p.extends_past_now ? '是' : '时效已结束') : '—' },
-    { label: '观测口径', value: '62.5 km · 48h 平均' },
+    { label: '所选时效有效至', value: fmtUtc(props.validUntil), cy: true },
+    { label: '预报状态', value: horizonText.value },
+    { label: '观测口径', value: d?.available ? `${d.resolution_km ?? 62.5} km · ${d.observation_span_hours ?? 48}h 平均` : '—' },
     { label: '连续观测帧', value: d?.n_frames || '—' },
   ]
   const rows = [
@@ -46,10 +66,10 @@ const dtRows = computed(() => {
 </script>
 
 <template>
-  <PanelShell title="异常提示与数据时间" subtitle="warnings · data_time">
+  <PanelShell title="异常提示与数据时间">
     <template #extra>
       <span class="tag" :class="showWarnings.length ? 'amber' : 'green'">
-        {{ showWarnings.length ? showWarnings.length + ' 条提示' : '无异常' }}
+        {{ showWarnings.length ? showWarnings.length + ' 条异常' : recent && validUntil === null ? '待载入' : '无异常' }}
       </span>
     </template>
 
@@ -63,9 +83,9 @@ const dtRows = computed(() => {
         <span class="warn-code">{{ LEVEL_LABEL[w.level] || w.level || 'INFO' }}</span>
         <span class="warn-msg">{{ w.message }}</span>
       </div>
-      <div v-if="!showWarnings.length" class="warn-empty">
+      <div v-if="!showWarnings.length && (!recent || validUntil !== null)" class="warn-empty">
         <span class="dot ok"></span>
-        {{ pagesMode ? '无异常提示' : '无异常提示 · 数据与推理链路正常' }}
+        当前无异常
       </div>
     </div>
 
@@ -81,8 +101,13 @@ const dtRows = computed(() => {
           <span class="dt-value" :class="{ cy: row.cy }" :title="row.value">{{ row.value }}</span>
         </div>
       </div>
+      <p v-if="recent && dataTime?.available" class="data-method">
+        OSI SAF 观测已映射到 25 km 训练网格。近期预报精度需用同期 OSI SAF 观测检验。
+        <template v-if="leadDays > 1">多日预报为试验性结果，误差可能随时效增加。</template>
+      </p>
       <div class="dt-updated">
-        <span>预测更新 {{ predictAt ? fmtTimeOnly(predictAt) : '—' }}</span>
+        <span v-if="recent && pagesMode">网站发布 {{ fmtUtc(dataTime?.published_at) }}</span>
+        <span v-else>预测更新 {{ predictAt ? fmtTimeOnly(predictAt) : '—' }}</span>
         <span v-if="!pagesMode">回测更新 {{ backtestAt ? fmtTimeOnly(backtestAt) : '—' }}</span>
       </div>
     </div>
@@ -90,6 +115,13 @@ const dtRows = computed(() => {
 </template>
 
 <style scoped>
+.data-method {
+  margin: 5px 0 3px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
 .dt-updated {
   display: flex;
   justify-content: space-between;

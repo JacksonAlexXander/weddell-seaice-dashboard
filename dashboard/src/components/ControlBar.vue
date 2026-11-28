@@ -10,7 +10,7 @@ const props = defineProps({
   recentBatch: { type: Object, default: null },
   recentLoading: { type: Boolean, default: false },
   recentError: { type: String, default: '' },
-  recentExpired: { type: Boolean, default: false },
+  recentNotice: { type: String, default: '' },
   selection: { type: Object, required: true },
   dataTime: { type: Object, default: null },
   predictStatus: { type: String, default: 'idle' },
@@ -130,8 +130,8 @@ function onCol(e) {
         <option v-for="day in [1, 2, 3]" :key="day" :value="day">+{{ day * 24 }} 小时</option>
       </select>
     </div>
-    <div v-if="mode === 'recent' && (recentError || recentExpired)" class="ctl-group" role="status">
-      <span class="chip error">{{ recentError || (pagesMode ? '当前发布批次已过期，可查看存档轨迹' : '缓存时效已结束，请更新近期观测') }}</span>
+    <div v-if="mode === 'recent' && (recentError || recentNotice)" class="ctl-group" role="status">
+      <span class="chip" :class="{ error: recentError }">{{ recentError || recentNotice }}</span>
     </div>
 
     <div class="ctl-group">

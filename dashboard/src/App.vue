@@ -22,6 +22,8 @@ const {
   dataTime,
   activeDataTime,
   recentExpired,
+  recentValidUntil,
+  recentHorizonExpired,
   modelsList,
   selectedModel,
   currentFieldLoading,
@@ -141,7 +143,7 @@ const retryBacktest = () => actions.loadBacktest()
           :recent-batch="state.recentBatch"
           :recent-loading="state.recentLoading"
           :recent-error="state.recentError || ''"
-          :recent-expired="recentExpired"
+          :recent-notice="state.recentNotice"
           @mode-change="actions.setMode"
           @lead-change="actions.setLeadDays"
           @refresh-recent="actions.refreshRecent"
@@ -220,6 +222,10 @@ const retryBacktest = () => actions.loadBacktest()
         />
         <StatusPanel
           :warnings="warnings"
+          :batch-expired="recentExpired"
+          :valid-until="recentValidUntil"
+          :horizon-expired="recentHorizonExpired"
+          :lead-days="state.leadDays"
           :data-time="activeDataTime"
           :recent="state.mode === 'recent'"
           :prediction="state.prediction"

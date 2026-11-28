@@ -16,6 +16,8 @@
 
 GitHub Pages 构建设置 `VITE_GITHUB_PAGES=1`，使用 `scripts/export_pages.py` 生成预报数据。带 `--refresh` 时从 OSI SAF 读取近期观测，带 `--snapshot` 时读取经验证的本地观测批次。
 
+在线版打开时及打开后每 5 分钟检查最新发布批次，也可在页面点击「检查新批次」。预报有效期从观测结束时刻计。独立运行 `scripts/publish_pages_forecast.py` 可以使用已授权 GitHub CLI 将更新的 OSI SAF 观测推理结果发布到 `gh-pages`；相同观测时间的批次会跳过。运行依赖为 `requirements.txt` 和 `certifi`，完整参数见 `--help`。
+
 ## 下载前请阅读
 
 © 2026 JacksonAlexXander。完整包可公开下载，用于个人学习、非商业教学和非商业科研。引用时请注明作者、项目链接、版本和数据来源。商用、转载、镜像、再分发及对外部署须事先取得作者书面许可。分享请发送官方链接。

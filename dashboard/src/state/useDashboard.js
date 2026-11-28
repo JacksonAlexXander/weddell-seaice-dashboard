@@ -23,6 +23,7 @@ export function useDashboard() {
     recentBatch: null,
     recentLoading: false,
     recentError: null,
+    recentNotice: '',
 
     health: { ok: false, checked: false, error: null, data: null, checkedAt: null },
 
@@ -72,6 +73,7 @@ export function useDashboard() {
 
   let clockTimer = 0
   let healthTimer = 0
+  let publicationTimer = 0
   let fieldToken = 0
   let predFieldToken = 0
   let predictRunId = 0
@@ -93,6 +95,15 @@ export function useDashboard() {
   })
   const recentExpired = computed(() => Boolean(state.recentBatch?.available &&
     Date.parse(state.recentBatch.latest_at) + 3 * 86400000 <= state.clock.getTime()))
+  const recentValidUntil = computed(() => {
+    if (state.mode !== 'recent' || !state.recentBatch?.available) return null
+    const prediction = state.prediction
+    const hours = prediction?.series_horizon?.hours?.at(-1) ?? state.leadDays * 24
+    const end = Date.parse(state.recentBatch.latest_at)
+    return Number.isFinite(end) ? end + hours * 3600000 : null
+  })
+  const recentHorizonExpired = computed(() => recentValidUntil.value !== null &&
+    recentValidUntil.value <= state.clock.getTime())
 
   const availableModels = computed(() => modelsList.value.filter((m) => m.available !== false))
 
@@ -287,23 +298,40 @@ export function useDashboard() {
     state.selection.col = batch.default_cell.col
   }
 
-  async function refreshRecent() {
-    if (state.recentLoading) return
-    state.recentLoading = true
-    state.recentError = null
+  let checkingPublication = false
+
+  async function refreshRecent(silent = false) {
+    if (checkingPublication || state.recentLoading || state.predictStatus === 'running') return
+    checkingPublication = true
+    state.recentLoading = !silent
+    state.recentNotice = ''
     try {
-      state.recentBatch = await api.refreshRecent()
-      if (state.mode === 'recent') {
-        applyRecentBatch()
-        clearPrediction()
-        state.predictedKey = ''
-        await loadField()
-        if (state.mapMode === 'predicted') await loadPredictedField()
+      const previous = state.recentBatch
+      const latest = await api.refreshRecent()
+      state.recentError = null
+      if (pagesMode && previous?.published_at === latest.published_at) {
+        if (!silent) state.recentNotice = '当前已是网站最新发布批次'
+        return
+      }
+      state.recentBatch = latest
+      if (state.mode !== 'recent') return
+      if (pagesMode) state.selection.date = latest.latest_date
+      else applyRecentBatch()
+      clearPrediction()
+      state.predictedKey = ''
+      await loadField()
+      if (state.mapMode === 'predicted') await loadPredictedField()
+      if (pagesMode && state.observedField) {
+        const { row, col } = state.selection
+        if (!Number.isFinite(state.observedField.speed?.[row]?.[col])) applyRecentBatch()
+        await runPredict(true)
+        if (!silent) state.recentNotice = '已载入新预报批次'
       }
     } catch (err) {
-      state.recentError = describeError(err)
+      if (!silent) state.recentError = describeError(err)
     } finally {
       state.recentLoading = false
+      checkingPublication = false
     }
   }
 
@@ -433,8 +461,8 @@ export function useDashboard() {
   }
 
   // ---------------- 预测 ----------------
-  async function runPredict() {
-    if (state.predictStatus === 'running') return
+  async function runPredict(afterRefresh = false) {
+    if (state.predictStatus === 'running' || (checkingPublication && afterRefresh !== true)) return
     if (!state.models) {
       state.predictStatus = 'error'
       state.predictError = state.modelsError || '模型列表尚未加载'
@@ -504,6 +532,9 @@ export function useDashboard() {
         state.clock = new Date()
       }, 1000)
     }
+    if (pagesMode && !publicationTimer) {
+      publicationTimer = window.setInterval(() => refreshRecent(true), 5 * 60 * 1000)
+    }
     if (!healthTimer) {
       healthTimer = window.setInterval(() => loadHealth(), 25000)
     }
@@ -537,8 +568,10 @@ export function useDashboard() {
     disposed = true
     if (clockTimer) window.clearInterval(clockTimer)
     if (healthTimer) window.clearInterval(healthTimer)
+    if (publicationTimer) window.clearInterval(publicationTimer)
     clockTimer = 0
     healthTimer = 0
+    publicationTimer = 0
   }
 
   return {
@@ -547,6 +580,8 @@ export function useDashboard() {
     dataTime,
     activeDataTime,
     recentExpired,
+    recentValidUntil,
+    recentHorizonExpired,
     modelsList,
     availableModels,
     selectedModel,
