@@ -113,15 +113,6 @@ export function useDashboard() {
     state.mapMode === 'predicted' ? state.predictedError : state.fieldError
   )
 
-  const selectedLatLon = computed(() => {
-    const field = state.observedField || state.predictedField
-    if (!field) return null
-    const lat = field.row_lat?.[state.selection.row]
-    const lon = field.col_lon?.[state.selection.col]
-    if (lat === undefined || lon === undefined) return null
-    return { lat, lon }
-  })
-
   /** 地图上的 24h 预测路径（仅当预测日期与地图观测日一致时显示） */
   const mapPredictionPath = computed(() => {
     const p = state.prediction
@@ -562,7 +553,6 @@ export function useDashboard() {
     currentField,
     currentFieldLoading,
     currentFieldError,
-    selectedLatLon,
     mapPredictionPath,
     warnings,
     banner,

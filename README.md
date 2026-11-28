@@ -8,6 +8,12 @@
 
 在线版显示已训练的 SimVP、Ridge 和 Random Forest 生成的 24、48、72 小时漂移场和轨迹，可下载像元预报 JSON。起报时间以 OSI SAF 观测结束时刻为准。历史回测面板提供 2025 年上半年固定像元的观测与预测对比。自选归档日期与像元的回测、FastAPI 推理接口可通过完整运行包使用。
 
+漂移场地图可切换 **48 年平均密集度**、**漂移速度**和**卫星底图**。白色箭头表示当前所选观测或预测场，金色线段表示选中像元的预测轨迹。地图从 75°W 至 20°E，60°S 至 83°S，采用以 30°W 为中央经线的南极等面积投影。运动图层沿用 NSIDC-0116 的 25 km 网格。
+
+- 卫星底图取自 [PGC Antarctic Composite Basemap](https://overlord.pgc.umn.edu/arcgis/rest/services/imagery/ant_pgc_composite_mosaic/MapServer)，由 USGS、BAS、NASA 和 PGC 提供的 Landsat LIMA 及 MODIS 镶嵌影像，经区域裁切、重投影和冰盖、冰架色调区分后发布。
+- 陆地、冰盖和冰架掩膜派生自 [SCAR Antarctic Digital Database v7.13](https://doi.org/10.5285/96ffb7ba-69a9-4ec3-aede-07e746f1555a)，Gerrish 等（2026），[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。
+- 平均密集度采用作者 MATLAB 成果 `weddell_48yr_mean_fields_1978_2025.mat` 中的原始 `concMean`，来源为 [NOAA/NSIDC Sea Ice Index v4](https://doi.org/10.7265/a98x-0f50)（Fetterer 等，2025）。覆盖 1978-10-26 至 2025-12-30，使用月均资料按日数加权。按参考图的 15% 门槛着色。网页发布裁切后的地图图层。输入说明和处理程序见 `scripts/build_weddell_map.py --help`。
+
 GitHub Pages 构建设置 `VITE_GITHUB_PAGES=1`，使用 `scripts/export_pages.py` 生成预报数据。带 `--refresh` 时从 OSI SAF 读取近期观测，带 `--snapshot` 时读取经验证的本地观测批次。
 
 ## 下载前请阅读

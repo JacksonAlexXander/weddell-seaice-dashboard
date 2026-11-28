@@ -26,7 +26,6 @@ const {
   selectedModel,
   currentFieldLoading,
   currentFieldError,
-  selectedLatLon,
   mapPredictionPath,
   warnings,
   banner,
@@ -164,10 +163,8 @@ const retryBacktest = () => actions.loadBacktest()
           :observed-field="state.observedField"
           :predicted-field="state.predictedField"
           :selected-cell="state.selection"
-          :selected-lat-lon="selectedLatLon"
           :path="mapPredictionPath"
           :selected-model="selectedModel"
-          :prediction-input="state.prediction?.input || null"
           :loading="currentFieldLoading"
           :error="currentFieldError || ''"
           @mode-change="actions.setMapMode"
